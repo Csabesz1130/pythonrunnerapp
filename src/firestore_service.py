@@ -6,7 +6,7 @@ import logging
 class FirestoreService:
     def __init__(self, credentials_path=None):
         if credentials_path is None:
-            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-7074e046ed.json"
+            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-ab213e15ac.json"
 
         if not os.path.exists(credentials_path):
             raise FileNotFoundError(f"Firebase credentials file not found at: {credentials_path}")
@@ -40,13 +40,17 @@ class FirestoreService:
             logging.error(f"Error fetching company details: {e}")
             return {}
 
-    # ... (other methods remain the same)
 
     def add_company(self, collection, data):
         return self.db.collection(collection).add(data)[1].id
 
     def update_company(self, collection, company_id, data):
-        self.db.collection(collection).document(company_id).update(data)
+        doc_ref = self.db.collection(collection).document(company_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            doc_ref.update(data)
+        else:
+            raise ValueError(f"No document found with ID: {company_id} in collection: {collection}")
 
     def delete_company(self, collection, company_id):
         self.db.collection(collection).document(company_id).delete()
