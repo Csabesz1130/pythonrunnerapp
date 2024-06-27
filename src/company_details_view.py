@@ -2,23 +2,23 @@ import logging
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
                              QCheckBox, QComboBox, QTextEdit, QPushButton, QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSignal
-
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+from datetime import datetime
+from src.company_details_view_base import CompanyDetailsViewBase
 
 class CompanyDetailsView(QDialog):
     companyUpdated = pyqtSignal(str)
 
-    def __init__(self, firestore_service, collection, company_id=None, parent=None):
+    def __init__(self, firestore_service, company_id=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Company Details")
+        self.setWindowTitle("Company Details - Demolition")
         self.setGeometry(200, 200, 600, 800)
         self.firestore_service = firestore_service
-        self.collection = collection
         self.company_id = company_id
         self.company_data = {}
         self.setup_ui()
-        self.load_company_data()
-        self.set_edit_mode(True if not company_id else False)
+        if company_id:
+            self.load_company_data()
+        self.set_edit_mode(False)
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -33,37 +33,21 @@ class CompanyDetailsView(QDialog):
         self.program_edit = QLineEdit()
         form_layout.addRow("Program:", self.program_edit)
 
-        self.eloszto_check = QCheckBox()
-        form_layout.addRow("Elosztó:", self.eloszto_check)
+        self.bontas_combo = QComboBox()
+        self.bontas_combo.addItems(["Bontható", "Még Nyitva", "Nem Hozzáférhető"])
+        form_layout.addRow("Field 1 (Bontás):", self.bontas_combo)
 
-        self.aram_check = QCheckBox()
-        form_layout.addRow("Áram:", self.aram_check)
+        self.felszereles_combo = QComboBox()
+        self.felszereles_combo.addItems(["CSOMAGOLVA", "SZÁLLÍTÁSRA_VÁR", "ELSZÁLLÍTVA", "NINCS_STATUSZ"])
+        form_layout.addRow("Felszerelés:", self.felszereles_combo)
 
-        self.halozat_check = QCheckBox()
-        form_layout.addRow("Halozat:", self.halozat_check)
-
-        self.telepites_combo = QComboBox()
-        self.telepites_combo.addItems(["KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"])
-        form_layout.addRow("Telepítés:", self.telepites_combo)
-
-        self.felderites_combo = QComboBox()
-        self.felderites_combo.addItems(["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
-        form_layout.addRow("Felderítés:", self.felderites_combo)
+        self.bazis_leszereles_check = QCheckBox()
+        form_layout.addRow("Bázis Leszerelés:", self.bazis_leszereles_check)
 
         self.last_modified_label = QLabel()
         form_layout.addRow("Last Modified:", self.last_modified_label)
 
         main_layout.addLayout(form_layout)
-
-        self.comments_text = QTextEdit()
-        self.comments_text.setReadOnly(True)
-        main_layout.addWidget(QLabel("Comments:"))
-        main_layout.addWidget(self.comments_text)
-
-        self.new_comment_text = QTextEdit()
-        self.new_comment_text.setPlaceholderText("Add a new comment...")
-        main_layout.addWidget(QLabel("New Comment:"))
-        main_layout.addWidget(self.new_comment_text)
 
         button_layout = QHBoxLayout()
         self.edit_button = QPushButton("Edit")
@@ -82,24 +66,12 @@ class CompanyDetailsView(QDialog):
         self.delete_button.clicked.connect(self.delete_company)
         button_layout.addWidget(self.delete_button)
 
-        self.add_comment_button = QPushButton("Add Comment")
-        self.add_comment_button.clicked.connect(self.add_comment)
-        button_layout.addWidget(self.add_comment_button)
-
         main_layout.addLayout(button_layout)
 
     def load_company_data(self):
         try:
-            if self.company_id:
-                self.company_data = self.firestore_service.get_company(self.collection, self.company_id)
-                if self.company_data:
-                    self.update_ui_with_data()
-                else:
-                    logging.warning(f"No company found with ID: {self.company_id}")
-                    QMessageBox.information(self, "Information", f"No company found with ID: {self.company_id}")
-                    self.close()
-            else:
-                self.set_edit_mode(True)  # New company, enable editing mode
+            self.company_data = self.firestore_service.get_company("Company_Demolition", self.company_id)
+            self.update_ui_with_data()
         except Exception as e:
             logging.error(f"Error loading company data: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load company data: {str(e)}")
@@ -108,30 +80,21 @@ class CompanyDetailsView(QDialog):
         self.id_label.setText(str(self.company_data.get("Id", "")))
         self.name_edit.setText(self.company_data.get("CompanyName", ""))
         self.program_edit.setText(self.company_data.get("ProgramName", ""))
-        self.eloszto_check.setChecked(self.company_data.get("eloszto", False))
-        self.aram_check.setChecked(self.company_data.get("aram", False))
-        self.halozat_check.setChecked(self.company_data.get("halozat", False))
-        self.telepites_combo.setCurrentText(self.company_data.get("telepites", "KIADVA"))
-        self.felderites_combo.setCurrentText(self.company_data.get("felderites", "TELEPÍTHETŐ"))
-
+        self.bontas_combo.setCurrentText(self.company_data.get("1", "Bontható"))
+        self.felszereles_combo.setCurrentText(self.company_data.get("Felszerelés", "NINCS_STATUSZ"))
+        self.bazis_leszereles_check.setChecked(self.company_data.get("Bázis Leszerelés", False))
         last_modified = self.company_data.get("LastModified")
         if last_modified:
             self.last_modified_label.setText(last_modified.strftime("%Y-%m-%d %H:%M:%S"))
         else:
             self.last_modified_label.setText("")
 
-        self.comments_text.clear()
-        for comment in self.company_data.get("comments", []):
-            self.comments_text.append(f"{comment['author']} - {comment['timestamp']}:\n{comment['text']}\n")
-
     def set_edit_mode(self, editable):
-        self.name_edit.setReadOnly(not editable)
-        self.program_edit.setReadOnly(not editable)
-        self.eloszto_check.setEnabled(editable)
-        self.aram_check.setEnabled(editable)
-        self.halozat_check.setEnabled(editable)
-        self.telepites_combo.setEnabled(editable)
-        self.felderites_combo.setEnabled(editable)
+        self.name_edit.setEnabled(editable)
+        self.program_edit.setEnabled(editable)
+        self.bontas_combo.setEnabled(editable)
+        self.felszereles_combo.setEnabled(editable)
+        self.bazis_leszereles_check.setEnabled(editable)
         self.save_button.setEnabled(editable)
         self.cancel_button.setEnabled(editable)
         self.edit_button.setEnabled(not editable)
@@ -142,17 +105,16 @@ class CompanyDetailsView(QDialog):
             data = {
                 "CompanyName": self.name_edit.text(),
                 "ProgramName": self.program_edit.text(),
-                "eloszto": self.eloszto_check.isChecked(),
-                "aram": self.aram_check.isChecked(),
-                "halozat": self.halozat_check.isChecked(),
-                "telepites": self.telepites_combo.currentText(),
-                "felderites": self.felderites_combo.currentText(),
+                "Field 1": self.bontas_combo.currentText(),
+                "Felszerelés": self.felszereles_combo.currentText(),
+                "Bázis Leszerelés": self.bazis_leszereles_check.isChecked(),
+                "LastModified": datetime.now()
             }
 
             if self.company_id:
-                self.firestore_service.update_company(self.collection, self.company_id, data)
+                self.firestore_service.update_company("Company_Demolition", self.company_id, data)
             else:
-                self.company_id = self.firestore_service.add_company(self.collection, data)
+                self.company_id = self.firestore_service.add_company("Company_Demolition", data)
 
             self.set_edit_mode(False)
             self.load_company_data()  # Refresh data after save
@@ -177,29 +139,10 @@ class CompanyDetailsView(QDialog):
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.firestore_service.delete_company(self.collection, self.company_id)
+                self.firestore_service.delete_company("Company_Demolition", self.company_id)
                 QMessageBox.information(self, "Success", "Company deleted successfully!")
                 self.companyUpdated.emit(self.company_id)
                 self.accept()  # Close the dialog
             except Exception as e:
                 logging.error(f"Error deleting company: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to delete company: {str(e)}")
-
-    def add_comment(self):
-        comment_text = self.new_comment_text.toPlainText().strip()
-        if not comment_text:
-            return
-
-        try:
-            comment_data = {
-                "author": "Current User",  # Replace with actual user when authentication is implemented
-                "text": comment_text,
-                "timestamp": self.firestore_service.server_timestamp()
-            }
-            self.firestore_service.add_comment(self.collection, self.company_id, comment_data)
-            self.new_comment_text.clear()
-            self.load_company_data()  # Refresh to show the new comment
-            QMessageBox.information(self, "Success", "Comment added successfully!")
-        except Exception as e:
-            logging.error(f"Error adding comment: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to add comment: {str(e)}")

@@ -1,12 +1,17 @@
+import time
+
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
 import logging
 
+from google.cloud.exceptions import NotFound
+
+
 class FirestoreService:
     def __init__(self, credentials_path=None):
         if credentials_path is None:
-            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-ab213e15ac.json"
+            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-a27b27e8c7.json"
 
         if not os.path.exists(credentials_path):
             raise FileNotFoundError(f"Firebase credentials file not found at: {credentials_path}")
@@ -28,9 +33,19 @@ class FirestoreService:
             companies_ref = self.db.collection(collection)
             if festival and festival != "All Festivals":
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
-            return companies_ref.get()
+
+            companies = companies_ref.get()
+
+            if not companies:
+                logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
+                return []
+
+            return [company.to_dict() for company in companies]
+        except NotFound:
+            logging.error(f"Collection not found: {collection}")
+            return []
         except Exception as e:
-            logging.error(f"Error fetching companies: {e}")
+            logging.error(f"Error fetching companies: {e}", exc_info=True)
             return []
 
     def get_company(self, collection, company_id):
@@ -40,6 +55,9 @@ class FirestoreService:
             logging.error(f"Error fetching company details: {e}")
             return {}
 
+    def generate_id(self):
+        # Generate a unique ID based on the current timestamp
+        return str(int(time.time() * 1000))
 
     def add_company(self, collection, data):
         return self.db.collection(collection).add(data)[1].id

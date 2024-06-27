@@ -1,36 +1,15 @@
 import csv
 import logging
-from tkinter import dialog
+import sys
 
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-                             QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
-                             QFileDialog, QDialog, QFormLayout, QCheckBox)
-from PyQt6.QtCore import Qt
-from src.company_details_view import CompanyDetailsView
-
-class BulkEditDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Bulk Edit")
-        self.setGeometry(200, 200, 300, 200)
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QFormLayout(self)
-
-        self.field_combo = QComboBox()
-        self.field_combo.addItems(["eloszto", "aram", "halozat", "PTG", "szoftver", "param", "helyszin", "telepites", "felderites"])
-        layout.addRow("Field to edit:", self.field_combo)
-
-        self.value_input = QLineEdit()
-        layout.addRow("New value:", self.value_input)
-
-        self.apply_button = QPushButton("Apply")
-        self.apply_button.clicked.connect(self.accept)
-        layout.addRow(self.apply_button)
-
-    def get_field_and_value(self):
-        return self.field_combo.currentText(), self.value_input.text()
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QPushButton,
+                             QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox, QFileDialog, QApplication,
+                             QCheckBox)
+from PyQt6.QtCore import Qt, pyqtSignal
+from src.company_details_view_install import CompanyDetailsViewInstall
+from src.company_details_view_demolition import CompanyDetailsViewDemolition
+from src.edit_field_dialog import EditFieldDialog
+from src.firestore_service import FirestoreService
 
 class MainWindow(QMainWindow):
     def __init__(self, firestore_service):
@@ -49,7 +28,6 @@ class MainWindow(QMainWindow):
         self.load_companies()
 
     def setup_ui(self):
-        # Top layout for filters and search
         top_layout = QHBoxLayout()
 
         self.festival_combo = QComboBox()
@@ -74,14 +52,15 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(top_layout)
 
-        # Company table
+        self.select_all_checkbox = QCheckBox("Select All")
+        self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
+        self.main_layout.addWidget(self.select_all_checkbox)
+
         self.company_table = QTableWidget()
-        self.company_table.setColumnCount(10)  # Added one more column for checkboxes
-        self.company_table.setHorizontalHeaderLabels(["Select", "ID", "Name", "Program", "Eloszto", "Aram", "Halozat", "Telepites", "Felderites", "Last Modified"])
         self.company_table.cellDoubleClicked.connect(self.open_company_details)
+        self.company_table.setColumnCount(1)
         self.main_layout.addWidget(self.company_table)
 
-        # Bottom buttons
         button_layout = QHBoxLayout()
 
         self.add_company_button = QPushButton("Add Company")
@@ -102,6 +81,15 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(button_layout)
 
+        self.install_radio.toggled.connect(self.load_companies)
+        self.demolition_radio.toggled.connect(self.load_companies)
+
+    def select_all_changed(self, state):
+        for row in range(self.company_table.rowCount()):
+            checkbox = self.company_table.cellWidget(row, 0)
+            if isinstance(checkbox, QCheckBox):
+                checkbox.setChecked(state == Qt.CheckState.Checked)
+
     def populate_festivals(self):
         try:
             festivals = self.firestore_service.get_festivals()
@@ -112,38 +100,73 @@ class MainWindow(QMainWindow):
 
     def load_companies(self):
         try:
-            collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
+            collection = self.get_current_collection()
             festival = self.festival_combo.currentText()
+            if festival == "All Festivals":
+                festival = None
+
             companies = self.firestore_service.get_companies(collection, festival)
 
+            logging.debug(f"Retrieved companies: {companies}")
+
+            headers = self.get_headers_for_collection(collection)
+            self.company_table.setColumnCount(len(headers))
+            self.company_table.setHorizontalHeaderLabels(headers)
+
             self.company_table.setRowCount(len(companies))
+
             for i, company in enumerate(companies):
-                data = company.to_dict()
+                self.populate_table_row(i, company, collection)
 
-                # Add checkbox
-                checkbox = QTableWidgetItem()
-                checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-                checkbox.setCheckState(Qt.CheckState.Unchecked)
-                self.company_table.setItem(i, 0, checkbox)
+            self.company_table.resizeColumnsToContents()
 
-                self.company_table.setItem(i, 1, QTableWidgetItem(str(data.get("Id", ""))))
-                self.company_table.setItem(i, 2, QTableWidgetItem(data.get("CompanyName", "")))
-                self.company_table.setItem(i, 3, QTableWidgetItem(data.get("ProgramName", "")))
-                self.company_table.setItem(i, 4, QTableWidgetItem("Yes" if data.get("eloszto", False) else "No"))
-                self.company_table.setItem(i, 5, QTableWidgetItem("Yes" if data.get("aram", False) else "No"))
-                self.company_table.setItem(i, 6, QTableWidgetItem("Yes" if data.get("halozat", False) else "No"))
-                self.company_table.setItem(i, 7, QTableWidgetItem(data.get("telepites", "KIADVA")))
-                self.company_table.setItem(i, 8, QTableWidgetItem(data.get("felderites", "TELEPÍTHETŐ")))
-                self.company_table.setItem(i, 9, QTableWidgetItem(str(data.get("LastModified", ""))))
+            if not companies:
+                logging.info(f"No companies found for collection: {collection}, festival: {festival}")
+                QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
+
         except Exception as e:
-            logging.error(f"Error loading companies: {e}")
+            logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
+
+    def get_current_collection(self):
+        return "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
+
+    def get_headers_for_collection(self, collection):
+        common_headers = ["ID", "Name", "Program"]
+        if collection == "Company_Install":
+            specific_headers = ["Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        else:  # Company_Demolition
+            specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
+        return ["Select"] + common_headers + specific_headers + ["Last Modified"]
+
+    def populate_table_row(self, row, data, collection):
+        field_mapping = self.get_field_mapping(collection)
+        headers = self.get_headers_for_collection(collection)
+
+        # Add checkbox in the first column
+        checkbox = QCheckBox()
+        self.company_table.setCellWidget(row, 0, checkbox)
+
+        for col, header in enumerate(headers[1:], start=1):  # Start from 1 to skip the "Select" column
+            field = next((f for f, h in field_mapping.items() if h == header), None)
+            if field is not None:
+                value = data.get(field, "")
+                if header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
+                    display_value = "Van" if value else "Nincs"
+                elif header == "Last Modified":
+                    display_value = str(value) if value else ""
+                else:
+                    display_value = str(value)
+                self.company_table.setItem(row, col, QTableWidgetItem(display_value))
 
     def open_company_details(self, row, column):
         try:
             company_id = self.company_table.item(row, 1).text()
-            collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
-            details_view = CompanyDetailsView(self.firestore_service, collection, company_id, self)
+            collection = self.get_current_collection()
+            if collection == "Company_Install":
+                details_view = CompanyDetailsViewInstall(self.firestore_service, company_id, self)
+            else:
+                details_view = CompanyDetailsViewDemolition(self.firestore_service, company_id, self)
             details_view.companyUpdated.connect(self.load_companies)
             details_view.show()
         except Exception as e:
@@ -152,33 +175,23 @@ class MainWindow(QMainWindow):
 
     def filter_companies(self):
         search_text = self.search_input.text().lower()
-        festival = self.festival_combo.currentText()
-        collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
-
         for row in range(self.company_table.rowCount()):
-            show_row = True
-
-            # Apply search filter
-            if search_text:
-                show_row = False
-                for col in range(1, self.company_table.columnCount()):  # Start from 1 to skip checkbox column
-                    item = self.company_table.item(row, col)
-                    if item and search_text in item.text().lower():
-                        show_row = True
-                        break
-
-            # Apply festival filter
-            if festival != "All Festivals":
-                program_item = self.company_table.item(row, 3)  # Assuming ProgramName is in column 3
-                if program_item and program_item.text() != festival:
-                    show_row = False
-
+            show_row = False
+            for col in range(1, self.company_table.columnCount()):
+                item = self.company_table.item(row, col)
+                if item and search_text in item.text().lower():
+                    show_row = True
+                    break
             self.company_table.setRowHidden(row, not show_row)
 
     def add_company(self):
         try:
-            collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
-            details_view = CompanyDetailsView(self.firestore_service, collection, parent=self)
+            collection = self.get_current_collection()
+            new_id = self.firestore_service.generate_id()
+            if collection == "Company_Install":
+                details_view = CompanyDetailsViewInstall(self.firestore_service, new_id, self)
+            else:
+                details_view = CompanyDetailsViewDemolition(self.firestore_service, new_id, self)
             details_view.companyUpdated.connect(self.load_companies)
             details_view.show()
         except Exception as e:
@@ -189,62 +202,125 @@ class MainWindow(QMainWindow):
         try:
             filename, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV Files (*.csv)")
             if filename:
-                with open(filename, 'w', newline='') as f:
+                with open(filename, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
-                    headers = [self.company_table.horizontalHeaderItem(i).text() for i in range(1, self.company_table.columnCount())]  # Skip checkbox column
+                    headers = ["Telephely név", "Telephely kód", "Összes terminál igény", "Kiadva", "Kihelyezés",
+                               "Áram", "Elosztó", "Szoftver", "Teszt", "Véglegesítve", "Megjegyzés",
+                               "Megjegyzés ideje", "Véglegesités ideje"]
                     writer.writerow(headers)
-                    for row in range(self.company_table.rowCount()):
-                        if not self.company_table.isRowHidden(row):
-                            row_data = [self.company_table.item(row, col).text() for col in range(1, self.company_table.columnCount())]  # Skip checkbox column
-                            writer.writerow(row_data)
+
+                    collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
+                    companies = self.firestore_service.get_companies(collection)
+
+                    for company in companies:
+                        data = company.to_dict()
+                        row = [
+                            data.get("CompanyName", ""),  # Telephely név
+                            data.get("Id", ""),  # Telephely kód
+                            "",  # Összes terminál igény (not available)
+                            "Van" if data.get("2") == "KIADVA" else "Nincs",  # Kiadva
+                            data.get("2", ""),  # Kihelyezés
+                            "Nincs" if data.get("4", False) else "Van",  # Áram
+                            "Nincs" if data.get("3", False) else "Van",  # Elosztó
+                            "Nincs" if data.get("7", False) else "Van",  # Szoftver
+                            "Van" if data.get("2") == "HELYSZINEN_TESZTELVE" else "Nincs",  # Teszt
+                            "Van" if data.get("2") == "KIRAKVA" else "Nincs",  # Véglegesítve
+                            "",  # Megjegyzés (not available)
+                            str(data.get("LastModified", "")),  # Megjegyzés ideje
+                            str(data.get("LastModified", ""))  # Véglegesités ideje
+                        ]
+                        writer.writerow(row)
+
                 QMessageBox.information(self, "Export Complete", f"Data exported to {filename}")
         except Exception as e:
             logging.error(f"Error exporting to CSV: {e}")
             QMessageBox.critical(self, "Error", f"Failed to export to CSV: {str(e)}")
 
     def bulk_edit(self):
-        dialog = BulkEditDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            field, value = dialog.get_field_and_value()
-            selected_companies = []
+        selected_rows = [row for row in range(self.company_table.rowCount())
+                         if isinstance(self.company_table.cellWidget(row, 0), QCheckBox)
+                         and self.company_table.cellWidget(row, 0).isChecked()]
 
-        for row in range(self.company_table.rowCount()):
-            if self.company_table.item(row, 0).checkState() == Qt.CheckState.Checked:
-                company_id = self.company_table.item(row, 1).text()
-                selected_companies.append(company_id)
-
-        if not selected_companies:
-            QMessageBox.warning(self, "Warning", "No companies selected for bulk edit.")
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select companies to edit.")
             return
 
-        collection = "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
-        success_count = 0
-        error_count = 0
-        error_messages = []
+        collection = self.get_current_collection()
+        dialog = EditFieldDialog(collection, self)
+        if dialog.exec():
+            field, value = dialog.get_field_and_value()
+            self.apply_bulk_edit(field, value, selected_rows)
 
-        for company_id in selected_companies:
-            try:
-                data = {field: value}
-                if field in ["eloszto", "aram", "halozat", "PTG", "szoftver", "param", "helyszin"]:
-                    data[field] = value.lower() == "yes"
-                self.firestore_service.update_company(collection, company_id, data)
-                success_count += 1
-            except Exception as e:
-                error_count += 1
-                error_messages.append(f"Error updating company {company_id}: {str(e)}")
-                logging.error(f"Error updating company {company_id}: {e}")
+    def apply_bulk_edit(self, field, value, selected_rows):
+        collection = self.get_current_collection()
 
-        self.load_companies()  # Refresh the table
+        for row in selected_rows:
+            company_id = self.company_table.item(row, 1).text()
 
-        message = f"Bulk edit completed.\nSuccessful updates: {success_count}\nFailed updates: {error_count}"
-        if error_count > 0:
-            message += "\n\nErrors encountered:"
-            for error in error_messages[:5]:  # Show first 5 errors
-                message += f"\n- {error}"
-            if len(error_messages) > 5:
-                message += f"\n... and {len(error_messages) - 5} more errors."
+            data = {field: value}
+            success = self.firestore_service.update_company(collection, company_id, data)
 
-        if error_count > 0:
-            QMessageBox.warning(self, "Bulk Edit Results", message)
+            if success:
+                col = self.get_column_for_field(field, collection)
+                if col is not None:
+                    display_value = "Van" if value is True else "Nincs" if value is False else str(value)
+                    self.company_table.setItem(row, col + 1, QTableWidgetItem(display_value))
+            else:
+                QMessageBox.warning(self, "Update Failed", f"Failed to update company {company_id}")
+
+        self.load_companies()
+
+    def get_field_mapping(self, collection):
+        common_fields = {
+            "Id": "ID",
+            "CompanyName": "Name",
+            "ProgramName": "Program",
+            "LastModified": "Last Modified"
+        }
+
+        if collection == "Company_Install":
+            specific_fields = {
+                "1": "Felderítés",
+                "2": "Telepítés",
+                "3": "Elosztó",
+                "4": "Áram",
+                "5": "Hálózat",
+                "6": "PTG",
+                "7": "Szoftver",
+                "8": "Param",
+                "9": "Helyszín",
+            }
+        elif collection == "Company_Demolition":
+            specific_fields = {
+                "1": "Bontás",
+                "2": "Felszerelés",
+                "3": "Bázis Leszerelés",
+            }
         else:
-            QMessageBox.information(self, "Bulk Edit Results", message)
+            logging.warning(f"Unknown collection: {collection}")
+            specific_fields = {}
+
+        return {**common_fields, **specific_fields, "LastModified": "Last Modified"}
+
+    def get_column_for_field(self, field, collection):
+        headers = self.get_headers_for_collection(collection)
+        field_mapping = self.get_field_mapping(collection)
+        header = field_mapping.get(field)
+        if header in headers:
+            return headers.index(header)
+        return -1
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    try:
+        firestore_service = FirestoreService()
+        window = MainWindow(firestore_service)
+        window.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        logging.error(f"An error occurred while starting the application: {e}")
+        QMessageBox.critical(None, "Startup Error", f"An error occurred while starting the application: {str(e)}")
+        sys.exit(1)
