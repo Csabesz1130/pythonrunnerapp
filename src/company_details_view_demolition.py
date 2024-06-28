@@ -5,8 +5,8 @@ from src.company_details_view_base import CompanyDetailsViewBase
 class CompanyDetailsViewDemolition(CompanyDetailsViewBase):
     companyUpdated = pyqtSignal(str)
 
-    def __init__(self, firestore_service, company_id=None, parent=None):
-        super().__init__(firestore_service, "Company_Demolition", company_id, parent)
+    def __init__(self, firestore_service, company_id, parent=None, company_data=None):
+        super().__init__(firestore_service, "Company_Demolition", company_id, parent, company_data)
         self.setWindowTitle("Company Details - Demolition")
 
     def setup_specific_fields(self):
