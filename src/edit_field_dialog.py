@@ -69,7 +69,7 @@ class EditFieldDialog(QDialog):
         else:
             value = self.text_input.text()
 
-        return db_field, value
+        return field, value  # Return the display field name, not the db_field
 
     def get_field_mapping(self):
         if self.collection == "Company_Install":

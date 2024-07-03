@@ -152,12 +152,15 @@ class MainWindow(QMainWindow):
 
             for row, company in enumerate(companies):
                 for col, header in enumerate(headers):
-                    value = self.get_company_value(company, header, collection)
-                    item = QTableWidgetItem(str(value))
                     if col == 0:  # Checkbox column
+                        item = QTableWidgetItem()
                         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                         item.setCheckState(Qt.CheckState.Unchecked)
-                    self.company_table.setItem(row, col, item)
+                        self.company_table.setItem(row, col, item)
+                    else:
+                        value = self.get_company_value(company, header, collection)
+                        item = QTableWidgetItem(str(value))
+                        self.company_table.setItem(row, col, item)
 
             self.company_table.resizeColumnsToContents()
 
@@ -270,8 +273,7 @@ class MainWindow(QMainWindow):
     def apply_bulk_edit(self, field, value, selected_rows):
         collection = self.get_current_collection()
         field_mapping = self.get_field_mapping(collection)
-        reverse_mapping = {v: k for k, v in field_mapping.items()}
-        db_field = reverse_mapping.get(field, field)
+        db_field = field_mapping.get(field, field)  # Use the mapping if it exists, otherwise use the field name as is
 
         for row in selected_rows:
             company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
@@ -280,14 +282,18 @@ class MainWindow(QMainWindow):
 
             if success:
                 # Update the table
-                headers = self.get_headers_for_collection(collection)
-                col = headers.index(field)
-                display_value = "Van" if value is True else "Nincs" if value is False else str(value)
+                col = self.get_headers_for_collection(collection).index(field)
+                display_value = self.get_display_value(value)
                 self.company_table.item(row, col).setText(display_value)
             else:
                 QMessageBox.warning(self, "Update Failed", f"Failed to update company {company_id}")
 
         self.load_companies()  # Reload to ensure all data is up to date
+
+        def get_display_value(self, value):
+            if isinstance(value, bool):
+                return "Van" if value else "Nincs"
+            return str(value)
 
     def get_field_mapping(self, collection):
         common_fields = {

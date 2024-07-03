@@ -1,6 +1,7 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QPushButton, QMessageBox
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QLabel, QLineEdit, QPushButton, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from datetime import datetime
+import logging
 
 class CompanyDetailsViewBase(QDialog):
     companyUpdated = pyqtSignal(str)
@@ -12,6 +13,7 @@ class CompanyDetailsViewBase(QDialog):
         self.company_id = company_id
         self.company_data = company_data or {}
         self.setup_ui()
+        self.populate_festivals()
         if company_id and not company_data:
             self.load_company_data()
         self.update_ui_with_data()
@@ -27,8 +29,8 @@ class CompanyDetailsViewBase(QDialog):
         self.name_edit = QLineEdit()
         self.form_layout.addRow("Company Name:", self.name_edit)
 
-        self.program_edit = QLineEdit()
-        self.form_layout.addRow("Program:", self.program_edit)
+        self.program_combo = QComboBox()
+        self.form_layout.addRow("Program:", self.program_combo)
 
         self.setup_specific_fields()
 
@@ -62,6 +64,15 @@ class CompanyDetailsViewBase(QDialog):
         else:
             self.setup_demolition_fields()
 
+    def populate_festivals(self):
+        try:
+            festivals = self.firestore_service.get_festivals()
+            self.program_combo.clear()
+            self.program_combo.addItems(festivals)
+        except Exception as e:
+            print(f"Error populating festivals: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
+
     def load_company_data(self):
         try:
             self.company_data = self.firestore_service.get_company(self.collection, self.company_id)
@@ -73,7 +84,15 @@ class CompanyDetailsViewBase(QDialog):
     def update_ui_with_data(self):
         self.id_label.setText(str(self.company_data.get("Id", "")))
         self.name_edit.setText(self.company_data.get("CompanyName", ""))
-        self.program_edit.setText(self.company_data.get("ProgramName", ""))
+
+        program_name = self.company_data.get("ProgramName", "")
+        index = self.program_combo.findText(program_name)
+        if index >= 0:
+            self.program_combo.setCurrentIndex(index)
+        elif program_name:
+            self.program_combo.addItem(program_name)
+            self.program_combo.setCurrentText(program_name)
+
         last_modified = self.company_data.get("LastModified")
         if last_modified:
             self.last_modified_label.setText(last_modified.strftime("%Y-%m-%d %H:%M:%S"))
@@ -81,53 +100,21 @@ class CompanyDetailsViewBase(QDialog):
             self.last_modified_label.setText("")
         self.update_specific_fields()
 
-    def update_specific_fields(self):
-        if self.collection == "Company_Install":
-            self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
-            self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
-            self.eloszto_check.setChecked(self.company_data.get("3", False))
-            self.aram_check.setChecked(self.company_data.get("4", False))
-            self.halozat_check.setChecked(self.company_data.get("5", False))
-            self.ptg_check.setChecked(self.company_data.get("6", False))
-            self.szoftver_check.setChecked(self.company_data.get("7", False))
-            self.param_check.setChecked(self.company_data.get("8", False))
-            self.helyszin_check.setChecked(self.company_data.get("9", False))
-        else:
-            self.bontas_combo.setCurrentText(self.company_data.get("1", "BONTHATO"))
-            self.felszereles_combo.setCurrentText(self.company_data.get("2", "NINCS_STATUSZ"))
-            self.bazis_leszereles_check.setChecked(self.company_data.get("3", False))
-
     def set_edit_mode(self, editable):
         self.name_edit.setEnabled(editable)
-        self.program_edit.setEnabled(editable)
+        self.program_combo.setEnabled(editable)
         self.set_specific_fields_edit_mode(editable)
         self.save_button.setEnabled(editable)
         self.cancel_button.setEnabled(editable)
         self.edit_button.setEnabled(not editable)
         self.delete_button.setEnabled(not editable)
 
-    def set_specific_fields_edit_mode(self, editable):
-        if self.collection == "Company_Install":
-            self.felderites_combo.setEnabled(editable)
-            self.telepites_combo.setEnabled(editable)
-            self.eloszto_check.setEnabled(editable)
-            self.aram_check.setEnabled(editable)
-            self.halozat_check.setEnabled(editable)
-            self.ptg_check.setEnabled(editable)
-            self.szoftver_check.setEnabled(editable)
-            self.param_check.setEnabled(editable)
-            self.helyszin_check.setEnabled(editable)
-        else:
-            self.bontas_combo.setEnabled(editable)
-            self.felszereles_combo.setEnabled(editable)
-            self.bazis_leszereles_check.setEnabled(editable)
-
     def save_company(self):
         try:
             data = {
                 "Id": self.company_id,
                 "CompanyName": self.name_edit.text(),
-                "ProgramName": self.program_edit.text(),
+                "ProgramName": self.program_combo.currentText(),
                 "LastModified": datetime.now()
             }
             data.update(self.get_specific_fields_data())
