@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QComboBox, QLineEdit, QPushButton, QStackedWidget
+from PyQt6.QtCore import Qt
 
 class EditFieldDialog(QDialog):
     def __init__(self, collection, parent=None):
@@ -18,9 +19,11 @@ class EditFieldDialog(QDialog):
         self.text_input = QLineEdit()
         self.boolean_combo = QComboBox()
         self.boolean_combo.addItems(["Van", "Nincs"])
+        self.option_combo = QComboBox()
 
         self.value_stack.addWidget(self.text_input)
         self.value_stack.addWidget(self.boolean_combo)
+        self.value_stack.addWidget(self.option_combo)
         form.addRow("New value:", self.value_stack)
 
         layout.addLayout(form)
@@ -33,30 +36,46 @@ class EditFieldDialog(QDialog):
         self.update_value_widget(self.field_combo.currentText())
 
     def populate_field_combo(self):
-        if self.collection == "Company_Install":
-            fields = ["Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
-        else:  # Company_Demolition
-            fields = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
+        fields = self.get_field_mapping().keys()
         self.field_combo.addItems(fields)
 
     def update_value_widget(self, field):
-        is_boolean = field in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]
-        self.value_stack.setCurrentIndex(1 if is_boolean else 0)
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]
+        option_fields = {
+            "Felderítés": ["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"],
+            "Telepítés": ["KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"],
+            "Bontás": ["BONTHATO", "MEG_NYITVA", "NEM_HOZZAFERHETO"],
+            "Felszerelés": ["CSOMAGOLVA", "SZALLITASRA_VAR", "ELSZALLITVA", "NINCS_STATUSZ"]
+        }
+
+        if field in boolean_fields:
+            self.value_stack.setCurrentWidget(self.boolean_combo)
+        elif field in option_fields:
+            self.option_combo.clear()
+            self.option_combo.addItems(option_fields[field])
+            self.value_stack.setCurrentWidget(self.option_combo)
+        else:
+            self.value_stack.setCurrentWidget(self.text_input)
 
     def get_field_and_value(self):
         field = self.field_combo.currentText()
-        if self.value_stack.currentIndex() == 1:  # Boolean value
+        field_mapping = self.get_field_mapping()
+        db_field = field_mapping[field]
+
+        if self.value_stack.currentWidget() == self.boolean_combo:
             value = self.boolean_combo.currentText() == "Van"
+        elif self.value_stack.currentWidget() == self.option_combo:
+            value = self.option_combo.currentText()
         else:
             value = self.text_input.text()
 
-        # Map the field names to their corresponding Firestore field names
-        field_mapping = self.get_field_mapping()
-        return field_mapping.get(field, field), value
+        return db_field, value
 
     def get_field_mapping(self):
         if self.collection == "Company_Install":
             return {
+                "CompanyName": "CompanyName",
+                "ProgramName": "ProgramName",
                 "Felderítés": "1",
                 "Telepítés": "2",
                 "Elosztó": "3",
@@ -69,6 +88,8 @@ class EditFieldDialog(QDialog):
             }
         else:  # Company_Demolition
             return {
+                "CompanyName": "CompanyName",
+                "ProgramName": "ProgramName",
                 "Bontás": "1",
                 "Felszerelés": "2",
                 "Bázis Leszerelés": "3"

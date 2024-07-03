@@ -63,9 +63,9 @@ class MainWindow(QMainWindow):
         self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
         self.main_layout.addWidget(self.select_all_checkbox)
 
-        # Company table
         self.company_table = QTableWidget()
         self.company_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.company_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.company_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.company_table.doubleClicked.connect(self.open_company_details)
         self.company_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
@@ -97,10 +97,10 @@ class MainWindow(QMainWindow):
         self.demolition_radio.toggled.connect(self.load_companies)
 
     def select_all_changed(self, state):
-        for row in range(self.company_table.rowCount()):
-            self.company_table.item(row, 0).setCheckState(
-                Qt.CheckState.Checked if state == Qt.CheckState.Checked else Qt.CheckState.Unchecked
-            )
+        if state == Qt.CheckState.Checked:
+            self.company_table.selectAll()
+        else:
+            self.company_table.clearSelection()
 
     def populate_festivals(self):
         try:
@@ -253,12 +253,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to export to CSV: {str(e)}")
 
     def bulk_edit(self):
-        selected_items = self.company_table.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "No Selection", "Please select cells to edit.")
-            return
+        selected_rows = set()
+        for index in self.company_table.selectionModel().selectedRows():
+            selected_rows.add(index.row())
 
-        selected_rows = set(item.row() for item in selected_items)
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select rows to edit.")
+            return
 
         collection = self.get_current_collection()
         dialog = EditFieldDialog(collection, self)
@@ -272,9 +273,6 @@ class MainWindow(QMainWindow):
         reverse_mapping = {v: k for k, v in field_mapping.items()}
         db_field = reverse_mapping.get(field, field)
 
-        headers = self.get_headers_for_collection(collection)
-        col = headers.index(field) if field in headers else -1
-
         for row in selected_rows:
             company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
             data = {db_field: value}
@@ -282,13 +280,14 @@ class MainWindow(QMainWindow):
 
             if success:
                 # Update the table
-                if col != -1:
-                    display_value = "Van" if value is True else "Nincs" if value is False else str(value)
-                    self.company_table.item(row, col).setText(display_value)
+                headers = self.get_headers_for_collection(collection)
+                col = headers.index(field)
+                display_value = "Van" if value is True else "Nincs" if value is False else str(value)
+                self.company_table.item(row, col).setText(display_value)
             else:
                 QMessageBox.warning(self, "Update Failed", f"Failed to update company {company_id}")
 
-        self.load_companies()  # Reload the table to reflect all changes
+        self.load_companies()  # Reload to ensure all data is up to date
 
     def get_field_mapping(self, collection):
         common_fields = {
