@@ -1,5 +1,6 @@
 import csv
 import logging
+import os
 import sys
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -11,6 +12,7 @@ from src.company_details_view_install import CompanyDetailsViewInstall
 from src.company_details_view_demolition import CompanyDetailsViewDemolition
 from src.edit_field_dialog import EditFieldDialog
 from src.firestore_service import FirestoreService
+from src.excel_exporter import ExcelExporter
 
 class MainWindow(QMainWindow):
     def __init__(self, firestore_service):
@@ -233,27 +235,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to add company: {str(e)}")
 
     def export_to_csv(self):
-        try:
-            filename, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV Files (*.csv)")
-            if filename:
-                collection = self.get_current_collection()
-                headers = self.get_headers_for_collection(collection)[1:]  # Exclude 'Select' column
-
-                with open(filename, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(headers)
-
-                    for row in range(self.company_table.rowCount()):
-                        row_data = []
-                        for col in range(1, self.company_table.columnCount()):  # Start from 1 to skip 'Select' column
-                            item = self.company_table.item(row, col)
-                            row_data.append(item.text() if item else "")
-                        writer.writerow(row_data)
-
-                QMessageBox.information(self, "Export Complete", f"Data exported to {filename}")
-        except Exception as e:
-            logging.error(f"Error exporting to CSV: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to export to CSV: {str(e)}")
+        ExcelExporter.export_to_excel(self, self.company_table)
 
     def bulk_edit(self):
         selected_rows = set()
