@@ -13,6 +13,7 @@ from src.company_details_view_demolition import CompanyDetailsViewDemolition
 from src.edit_field_dialog import EditFieldDialog
 from src.firestore_service import FirestoreService
 from src.excel_exporter import ExcelExporter
+from src.table_filter import FilterableTableView
 
 class MainWindow(QMainWindow):
     def __init__(self, firestore_service):
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
         self.firestore_service = firestore_service
         self.current_sort_column = -1
         self.current_sort_order = Qt.SortOrder.AscendingOrder
+        self.filter_inputs = []  # New attribute to store filter inputs
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -50,7 +52,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.install_radio)
         top_layout.addWidget(self.demolition_radio)
 
-        # Search input and button
+        # Search input and button (keep existing search functionality)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search companies...")
         top_layout.addWidget(self.search_input)
@@ -60,11 +62,16 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(top_layout)
 
+        # Filter inputs layout
+        self.filter_layout = QHBoxLayout()
+        self.main_layout.addLayout(self.filter_layout)
+
         # Select all checkbox
         self.select_all_checkbox = QCheckBox("Select All")
         self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
         self.main_layout.addWidget(self.select_all_checkbox)
 
+        # Company table
         self.company_table = QTableWidget()
         self.company_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.company_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -94,9 +101,9 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(button_layout)
 
-        # Connect radio buttons to load_companies
-        self.install_radio.toggled.connect(self.load_companies)
-        self.demolition_radio.toggled.connect(self.load_companies)
+        # Connect radio buttons to load_companies and update_filter_inputs
+        self.install_radio.toggled.connect(self.on_collection_changed)
+        self.demolition_radio.toggled.connect(self.on_collection_changed)
 
     def select_all_changed(self, state):
         if state == Qt.CheckState.Checked:
@@ -170,6 +177,9 @@ class MainWindow(QMainWindow):
                 logging.info(f"No companies found for collection: {collection}, festival: {festival}")
                 QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
 
+            # Update filter inputs after loading companies
+            self.update_filter_inputs()
+
         except Exception as e:
             logging.error(f"Error loading companies: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
@@ -190,6 +200,55 @@ class MainWindow(QMainWindow):
             return str(value) if value else ""
         else:
             return str(value)
+
+    def apply_filters(self):
+        for row in range(self.company_table.rowCount()):
+            should_show = True
+            for col, filter_input in enumerate(self.filter_inputs):
+                filter_text = filter_input.text().lower()
+                if filter_text:
+                    item = self.company_table.item(row, col)
+                    if item is None or filter_text not in item.text().lower():
+                        should_show = False
+                        break
+            self.company_table.setRowHidden(row, not should_show)
+
+    def update_filter_inputs(self):
+        # Clear existing filter inputs
+        for input in self.filter_inputs:
+            input.deleteLater()
+        self.filter_inputs.clear()
+
+        # Clear the filter layout
+        while self.filter_layout.count():
+            item = self.filter_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add new filter inputs
+        headers = self.get_headers_for_collection(self.get_current_collection())
+        for header in headers:
+            filter_input = QLineEdit()
+            filter_input.setPlaceholderText(f"Filter {header}...")
+            filter_input.textChanged.connect(self.apply_filters)
+            self.filter_layout.addWidget(filter_input)
+            self.filter_inputs.append(filter_input)
+
+    def on_collection_changed(self):
+        self.load_companies()
+        self.update_filter_inputs()
+
+    # Existing filter_companies method (keep for backwards compatibility)
+    def filter_companies(self):
+        search_text = self.search_input.text().lower()
+        for row in range(self.company_table.rowCount()):
+            should_show = False
+            for col in range(1, self.company_table.columnCount()):
+                item = self.company_table.item(row, col)
+                if item and search_text in item.text().lower():
+                    should_show = True
+                    break
+            self.company_table.setRowHidden(row, not should_show)
 
     def get_headers_for_collection(self, collection):
         common_headers = ["ID", "Name", "Program"]
