@@ -161,15 +161,12 @@ class MainWindow(QMainWindow):
 
             for row, company in enumerate(companies):
                 for col, header in enumerate(headers):
-                    if col == 0:  # Checkbox column
-                        item = QTableWidgetItem()
-                        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                        item.setCheckState(Qt.CheckState.Unchecked)
-                        self.company_table.setItem(row, col, item)
+                    if header == "ID":
+                        value = company.get('id', '')  # Use the 'id' field we added in get_companies
                     else:
                         value = self.get_company_value(company, header, collection)
-                        item = QTableWidgetItem(str(value))
-                        self.company_table.setItem(row, col, item)
+                    item = QTableWidgetItem(str(value))
+                    self.company_table.setItem(row, col, item)
 
             self.company_table.resizeColumnsToContents()
 
@@ -316,25 +313,49 @@ class MainWindow(QMainWindow):
         field_mapping = self.get_field_mapping(collection)
         db_field = field_mapping.get(field, field)  # Use the mapping if it exists, otherwise use the field name as is
 
+        success_count = 0
+        fail_count = 0
+        not_found_ids = []
+
         for row in selected_rows:
             company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
             data = {db_field: value}
-            success = self.firestore_service.update_company(collection, company_id, data)
+            logging.debug(f"Attempting to update company: ID={company_id}, Field={db_field}, Value={value}")
+            try:
+                success = self.firestore_service.update_company(collection, company_id, data)
+                if success:
+                    # Update the table
+                    col = self.get_headers_for_collection(collection).index(field)
+                    display_value = self.get_display_value(value)
+                    self.company_table.item(row, col).setText(display_value)
+                    success_count += 1
+                    logging.info(f"Successfully updated company: ID={company_id}")
+                else:
+                    fail_count += 1
+                    not_found_ids.append(company_id)
+                    logging.warning(f"Failed to update company: ID={company_id}")
+            except Exception as e:
+                logging.error(f"Error updating company {company_id}: {str(e)}")
+                fail_count += 1
+                not_found_ids.append(company_id)
 
-            if success:
-                # Update the table
-                col = self.get_headers_for_collection(collection).index(field)
-                display_value = self.get_display_value(value)
-                self.company_table.item(row, col).setText(display_value)
-            else:
-                QMessageBox.warning(self, "Update Failed", f"Failed to update company {company_id}")
+        # Show result message
+        if success_count > 0:
+            QMessageBox.information(self, "Bulk Edit Result",
+                                    f"Successfully updated {success_count} companies.")
+
+        if fail_count > 0:
+            error_msg = f"Failed to update {fail_count} companies.\n"
+            if not_found_ids:
+                error_msg += f"The following IDs were not found or couldn't be updated:\n{', '.join(not_found_ids)}"
+            QMessageBox.warning(self, "Bulk Edit Result", error_msg)
 
         self.load_companies()  # Reload to ensure all data is up to date
 
-        def get_display_value(self, value):
-            if isinstance(value, bool):
-                return "Van" if value else "Nincs"
-            return str(value)
+    def get_display_value(self, value):
+        if isinstance(value, bool):
+            return "Van" if value else "Nincs"
+        return str(value)
 
     def get_field_mapping(self, collection):
         common_fields = {

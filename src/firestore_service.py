@@ -4,6 +4,7 @@ from firebase_admin import credentials, firestore
 import os
 import logging
 from google.cloud.exceptions import NotFound
+from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
 class FirestoreService:
     def __init__(self, credentials_path=None):
@@ -43,12 +44,15 @@ class FirestoreService:
                 logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
                 return []
 
-            result = [company.to_dict() for company in companies]
+            result = []
+            for company in companies:
+                company_data = company.to_dict()
+                company_data['id'] = company.id  # Ensure the document ID is included
+                result.append(company_data)
+                logging.debug(f"Fetched company: ID={company.id}, Name={company_data.get('CompanyName', 'N/A')}")
+
             logging.info(f"Successfully fetched {len(result)} companies")
             return result
-        except NotFound:
-            logging.error(f"Collection not found: {collection}")
-            return []
         except Exception as e:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
             return []
@@ -94,7 +98,17 @@ class FirestoreService:
             doc_ref = self.db.collection(collection).document(company_id)
             doc = doc_ref.get()
             if doc.exists:
-                doc_ref.update(data)
+                # Convert boolean values to strings
+                updated_data = {}
+                for key, value in data.items():
+                    if isinstance(value, bool):
+                        updated_data[key] = "Van" if value else "Nincs"
+                    elif value is None:
+                        updated_data[key] = DELETE_FIELD
+                    else:
+                        updated_data[key] = value
+
+                doc_ref.set(updated_data, merge=True)
                 logging.info(f"Successfully updated company with ID: {company_id}")
                 return True
             else:
