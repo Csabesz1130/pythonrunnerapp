@@ -259,12 +259,18 @@ class MainWindow(QMainWindow):
         try:
             company_id = self.company_table.item(index.row(), 1).text()  # Assuming ID is in column 1
             collection = self.get_current_collection()
+            company_data = self.firestore_service.get_company(collection, company_id)
+
+            if company_data is None:
+                raise ValueError(f"No data found for company ID: {company_id}")
+
             if collection == "Company_Install":
-                details_view = CompanyDetailsViewInstall(self.firestore_service, company_id, self)
+                details_view = CompanyDetailsViewInstall(self.firestore_service, company_id, self, company_data)
             else:
-                details_view = CompanyDetailsViewDemolition(self.firestore_service, company_id, self)
+                details_view = CompanyDetailsViewDemolition(self.firestore_service, company_id, self, company_data)
+
             details_view.companyUpdated.connect(self.load_companies)
-            details_view.show()
+            details_view.exec()
         except Exception as e:
             logging.error(f"Error opening company details: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open company details: {str(e)}")

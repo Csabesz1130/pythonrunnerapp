@@ -11,15 +11,16 @@ class CompanyDetailsViewInstall(QDialog):
         self.firestore_service = firestore_service
         self.company_id = company_id
         self.company_data = company_data or {}
+        logging.debug(f"Initializing CompanyDetailsViewInstall with company_id: {company_id}, company_data: {self.company_data}")
         self.setWindowTitle("Company Details - Install")
         self.setup_ui()
         self.populate_festivals()
-        if not company_data:
+        if company_data:
+            self.update_ui_with_data()
+            self.set_edit_mode(True)  # Always start in edit mode for existing companies
+        else:
             self.initialize_new_company()
             self.set_edit_mode(True)  # New companies start in edit mode
-        else:
-            self.update_ui_with_data()
-            self.set_edit_mode(False)  # Existing companies start in view mode
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -118,13 +119,15 @@ class CompanyDetailsViewInstall(QDialog):
     def update_ui_with_data(self):
         self.id_label.setText(str(self.company_data.get("Id", "")))
         self.name_edit.setText(self.company_data.get("CompanyName", ""))
+        self.name_edit.setReadOnly(False)  # Ensure Company Name is editable
 
         program_name = self.company_data.get("ProgramName", "")
         index = self.program_combo.findText(program_name)
         if index >= 0:
             self.program_combo.setCurrentIndex(index)
         elif program_name:
-            logging.warning(f"Program '{program_name}' not found in the combo box")
+            self.program_combo.addItem(program_name)
+            self.program_combo.setCurrentText(program_name)
 
         self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
         self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
@@ -140,6 +143,8 @@ class CompanyDetailsViewInstall(QDialog):
         if isinstance(last_modified, QDateTime):
             last_modified = last_modified.toString("yyyy-MM-dd HH:mm:ss")
         self.last_modified_label.setText(str(last_modified))
+
+        logging.debug(f"Updated UI with company data: {self.company_data}")
 
     def set_edit_mode(self, editable):
         self.name_edit.setEnabled(editable)
