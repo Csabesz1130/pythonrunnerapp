@@ -63,9 +63,15 @@ class FirestoreService:
             if doc.exists:
                 company_data = doc.to_dict()
                 # Convert boolean fields to "Van"/"Nincs" for UI display
+                # and handle the quantity field
                 for key, value in company_data.items():
                     if isinstance(value, bool):
                         company_data[key] = "Van" if value else "Nincs"
+                    elif key == 'quantity':
+                        if value is None:
+                            company_data[key] = ""  # Empty string for None quantity
+                        else:
+                            company_data[key] = str(value)  # Convert to string for consistency
                 logging.info(f"Successfully fetched company data for ID: {company_id}")
                 logging.debug(f"Company data: {company_data}")
                 return company_data
@@ -113,7 +119,10 @@ class FirestoreService:
     def prepare_data_for_save(self, data):
         updated_data = {}
         for key, value in data.items():
-            if isinstance(value, bool):
+            if key == 'quantity':
+                # Ensure quantity is stored as an integer
+                updated_data[key] = int(value) if value else None
+            elif isinstance(value, bool):
                 updated_data[key] = value
             elif value == "Van":
                 updated_data[key] = True
@@ -124,6 +133,7 @@ class FirestoreService:
             else:
                 updated_data[key] = value
         return updated_data
+
 
     def delete_company(self, collection, company_id):
         logging.info(f"Deleting company - Collection: {collection}, ID: {company_id}")

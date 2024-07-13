@@ -121,7 +121,7 @@ class CompanyDetailsViewDemolition(CompanyDetailsViewBase):
 
     def get_company_data(self):
         return {
-            "Id": self.id_label.text(),
+            "Id": self.id_label.text(),  # Use the 'Id' from the label
             "CompanyName": self.name_edit.text(),
             "ProgramName": self.program_combo.currentText(),
             "1": self.bontas_combo.currentText(),

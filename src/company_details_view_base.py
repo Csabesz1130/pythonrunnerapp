@@ -32,6 +32,9 @@ class CompanyDetailsViewBase(QDialog):
         self.program_combo = QComboBox()
         self.form_layout.addRow("Program:", self.program_combo)
 
+        self.quantity_edit = QLineEdit()
+        self.form_layout.addRow("Quantity:", self.quantity_edit)
+
         self.setup_specific_fields()
 
         self.last_modified_label = QLabel()
@@ -70,7 +73,7 @@ class CompanyDetailsViewBase(QDialog):
             self.program_combo.clear()
             self.program_combo.addItems(festivals)
         except Exception as e:
-            print(f"Error populating festivals: {e}")
+            logging.error(f"Error populating festivals: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
 
     def load_company_data(self):
@@ -78,12 +81,13 @@ class CompanyDetailsViewBase(QDialog):
             self.company_data = self.firestore_service.get_company(self.collection, self.company_id)
             self.update_ui_with_data()
         except Exception as e:
-            print(f"Error loading company data: {e}")
+            logging.error(f"Error loading company data: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load company data: {str(e)}")
 
     def update_ui_with_data(self):
         self.id_label.setText(str(self.company_data.get("Id", "")))
         self.name_edit.setText(self.company_data.get("CompanyName", ""))
+        self.quantity_edit.setText(str(self.company_data.get("quantity", "")))
 
         program_name = self.company_data.get("ProgramName", "")
         index = self.program_combo.findText(program_name)
@@ -103,6 +107,7 @@ class CompanyDetailsViewBase(QDialog):
     def set_edit_mode(self, editable):
         self.name_edit.setEnabled(editable)
         self.program_combo.setEnabled(editable)
+        self.quantity_edit.setEnabled(editable)
         self.set_specific_fields_edit_mode(editable)
         self.save_button.setEnabled(editable)
         self.cancel_button.setEnabled(editable)
@@ -115,6 +120,7 @@ class CompanyDetailsViewBase(QDialog):
                 "Id": self.company_id,
                 "CompanyName": self.name_edit.text(),
                 "ProgramName": self.program_combo.currentText(),
+                "quantity": int(self.quantity_edit.text()) if self.quantity_edit.text() else None,
                 "LastModified": datetime.now()
             }
             data.update(self.get_specific_fields_data())
@@ -128,8 +134,10 @@ class CompanyDetailsViewBase(QDialog):
             self.load_company_data()
             self.companyUpdated.emit(self.company_id)
             QMessageBox.information(self, "Success", "Company data saved successfully!")
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Quantity must be a valid integer or empty.")
         except Exception as e:
-            print(f"Error saving company data: {e}")
+            logging.error(f"Error saving company data: {e}")
             QMessageBox.critical(self, "Error", f"Failed to save company data: {str(e)}")
 
     def get_specific_fields_data(self):
@@ -151,6 +159,7 @@ class CompanyDetailsViewBase(QDialog):
                 "2": self.felszereles_combo.currentText(),
                 "3": self.bazis_leszereles_check.isChecked()
             }
+
     def cancel_edit(self):
         if self.company_id:
             self.load_company_data()
@@ -171,5 +180,5 @@ class CompanyDetailsViewBase(QDialog):
                 self.companyUpdated.emit(self.company_id)
                 self.accept()
             except Exception as e:
-                print(f"Error deleting company: {e}")
+                logging.error(f"Error deleting company: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to delete company: {str(e)}")

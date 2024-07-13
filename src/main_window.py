@@ -87,8 +87,8 @@ class MainWindow(QMainWindow):
         self.add_company_button.clicked.connect(self.add_company)
         button_layout.addWidget(self.add_company_button)
 
-        self.export_button = QPushButton("Export List")
-        self.export_button.clicked.connect(self.export_to_csv)
+        self.export_button = QPushButton("Export to Excel")
+        self.export_button.clicked.connect(self.export_to_excel)
         button_layout.addWidget(self.export_button)
 
         self.refresh_button = QPushButton("Refresh")
@@ -132,6 +132,11 @@ class MainWindow(QMainWindow):
             self.current_sort_order = Qt.SortOrder.AscendingOrder
 
         self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+
+    def get_current_collection(self):
+        # Implement this method to return the current collection
+        # For example:
+        return "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
 
     def filter_companies(self):
         search_text = self.search_input.text().lower()
@@ -182,6 +187,8 @@ class MainWindow(QMainWindow):
         return "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
 
     def get_company_value(self, company, header, collection):
+        if header == "Quantity":
+            return str(company.get("quantity", ""))
         field_mapping = self.get_field_mapping(collection)
         field = next((f for f, h in field_mapping.items() if h == header), None)
         if field is None:
@@ -245,7 +252,7 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def get_headers_for_collection(self, collection):
-        common_headers = ["ID", "Name", "Program"]
+        common_headers = ["ID", "Name", "Program", "Quantity"]
         if collection == "Company_Install":
             specific_headers = ["Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
         else:  # Company_Demolition
@@ -293,8 +300,9 @@ class MainWindow(QMainWindow):
             logging.error(f"Error adding company: {e}")
             QMessageBox.critical(self, "Error", f"Failed to add company: {str(e)}")
 
-    def export_to_csv(self):
-        ExcelExporter.export_to_excel(self, self.company_table)
+    def export_to_excel(self):
+        collection = self.get_current_collection()
+        ExcelExporter.export_to_excel(self, self.company_table, collection)
 
     def bulk_edit(self):
         selected_rows = set()
