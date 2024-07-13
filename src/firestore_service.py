@@ -9,7 +9,7 @@ from google.cloud.firestore_v1.transforms import DELETE_FIELD
 class FirestoreService:
     def __init__(self, credentials_path=None):
         if credentials_path is None:
-            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-a27b27e8c7.json"
+            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-331f965683.json"
 
         if not os.path.exists(credentials_path):
             logging.error(f"Firebase credentials file not found at: {credentials_path}")
@@ -40,21 +40,19 @@ class FirestoreService:
 
             companies = companies_ref.get()
 
-            if not companies:
-                logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
-                return []
-
             result = []
             for company in companies:
                 company_data = company.to_dict()
-                company_data['id'] = company.id  # Ensure the document ID is included
+                # Ensure we're using the 'Id' field from the data, not the document ID
+                if 'Id' not in company_data:
+                    company_data['Id'] = company.id  # Fallback to document ID if 'Id' is missing
                 result.append(company_data)
-                logging.debug(f"Fetched company: ID={company.id}, Name={company_data.get('CompanyName', 'N/A')}")
+                logging.debug(f"Fetched company: ID={company_data['Id']}, Name={company_data.get('CompanyName', 'N/A')}")
 
             logging.info(f"Successfully fetched {len(result)} companies")
             return result
         except Exception as e:
-            logging.error(f"Error fetching companies: {e}", exc_info=True)
+            logging.error(f"Error fetching companies: {e}")
             return []
 
     def get_company(self, collection, company_id):
@@ -64,6 +62,10 @@ class FirestoreService:
             doc = doc_ref.get()
             if doc.exists:
                 company_data = doc.to_dict()
+                # Convert boolean fields to "Van"/"Nincs" for UI display
+                for key, value in company_data.items():
+                    if isinstance(value, bool):
+                        company_data[key] = "Van" if value else "Nincs"
                 logging.info(f"Successfully fetched company data for ID: {company_id}")
                 logging.debug(f"Company data: {company_data}")
                 return company_data
@@ -71,7 +73,7 @@ class FirestoreService:
                 logging.warning(f"No company found with ID: {company_id} in collection: {collection}")
                 return None
         except Exception as e:
-            logging.error(f"Error fetching company details: {e}", exc_info=True)
+            logging.error(f"Error fetching company details: {e}")
             return None
 
     def generate_id(self):
@@ -84,11 +86,11 @@ class FirestoreService:
         logging.debug(f"Company data: {data}")
         try:
             doc_ref = self.db.collection(collection).document(data['Id'])
-            doc_ref.set(data)
+            doc_ref.set(self.prepare_data_for_save(data))
             logging.info(f"Successfully added company with ID: {data['Id']}")
             return data['Id']
         except Exception as e:
-            logging.error(f"Error adding company: {e}", exc_info=True)
+            logging.error(f"Error adding company: {e}")
             raise
 
     def update_company(self, collection, company_id, data):
@@ -98,25 +100,30 @@ class FirestoreService:
             doc_ref = self.db.collection(collection).document(company_id)
             doc = doc_ref.get()
             if doc.exists:
-                # Convert boolean values to strings
-                updated_data = {}
-                for key, value in data.items():
-                    if isinstance(value, bool):
-                        updated_data[key] = "Van" if value else "Nincs"
-                    elif value is None:
-                        updated_data[key] = DELETE_FIELD
-                    else:
-                        updated_data[key] = value
-
-                doc_ref.set(updated_data, merge=True)
+                doc_ref.set(self.prepare_data_for_save(data), merge=True)
                 logging.info(f"Successfully updated company with ID: {company_id}")
                 return True
             else:
                 logging.warning(f"No document found with ID: {company_id} in collection: {collection}")
                 return False
         except Exception as e:
-            logging.error(f"Error updating company: {e}", exc_info=True)
+            logging.error(f"Error updating company: {e}")
             raise
+
+    def prepare_data_for_save(self, data):
+        updated_data = {}
+        for key, value in data.items():
+            if isinstance(value, bool):
+                updated_data[key] = value
+            elif value == "Van":
+                updated_data[key] = True
+            elif value == "Nincs":
+                updated_data[key] = False
+            elif value is None:
+                updated_data[key] = DELETE_FIELD
+            else:
+                updated_data[key] = value
+        return updated_data
 
     def delete_company(self, collection, company_id):
         logging.info(f"Deleting company - Collection: {collection}, ID: {company_id}")

@@ -153,16 +153,15 @@ class MainWindow(QMainWindow):
 
             companies = self.firestore_service.get_companies(collection, festival)
 
-            self.company_table.clear()
+            self.company_table.setRowCount(len(companies))
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
             self.company_table.setHorizontalHeaderLabels(headers)
-            self.company_table.setRowCount(len(companies))
 
             for row, company in enumerate(companies):
                 for col, header in enumerate(headers):
                     if header == "ID":
-                        value = company.get('id', '')  # Use the 'id' field we added in get_companies
+                        value = company.get('Id', '')  # Use 'Id' from the data
                     else:
                         value = self.get_company_value(company, header, collection)
                     item = QTableWidgetItem(str(value))
@@ -172,10 +171,8 @@ class MainWindow(QMainWindow):
 
             if not companies:
                 logging.info(f"No companies found for collection: {collection}, festival: {festival}")
-                QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
-
-            # Update filter inputs after loading companies
-            self.update_filter_inputs()
+            else:
+                logging.info(f"Loaded {len(companies)} companies")
 
         except Exception as e:
             logging.error(f"Error loading companies: {e}")
@@ -317,7 +314,7 @@ class MainWindow(QMainWindow):
     def apply_bulk_edit(self, field, value, selected_rows):
         collection = self.get_current_collection()
         field_mapping = self.get_field_mapping(collection)
-        db_field = field_mapping.get(field, field)  # Use the mapping if it exists, otherwise use the field name as is
+        db_field = field_mapping.get(field, field)
 
         success_count = 0
         fail_count = 0
@@ -325,14 +322,21 @@ class MainWindow(QMainWindow):
 
         for row in selected_rows:
             company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
-            data = {db_field: value}
-            logging.debug(f"Attempting to update company: ID={company_id}, Field={db_field}, Value={value}")
+
+            # Convert "Van"/"Nincs" to boolean for database update
+            if value in ["Van", "Nincs"]:
+                db_value = True if value == "Van" else False
+            else:
+                db_value = value
+
+            data = {db_field: db_value}
+            logging.debug(f"Attempting to update company: ID={company_id}, Field={db_field}, Value={db_value}")
             try:
                 success = self.firestore_service.update_company(collection, company_id, data)
                 if success:
                     # Update the table
                     col = self.get_headers_for_collection(collection).index(field)
-                    display_value = self.get_display_value(value)
+                    display_value = "Van" if db_value is True else "Nincs" if db_value is False else str(db_value)
                     self.company_table.item(row, col).setText(display_value)
                     success_count += 1
                     logging.info(f"Successfully updated company: ID={company_id}")
