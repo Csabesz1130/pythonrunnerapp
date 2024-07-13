@@ -9,7 +9,7 @@ from google.cloud.firestore_v1.transforms import DELETE_FIELD
 class FirestoreService:
     def __init__(self, credentials_path=None):
         if credentials_path is None:
-            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-a27b27e8c7.json"
+            credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-331f965683.json"
 
         if not os.path.exists(credentials_path):
             logging.error(f"Firebase credentials file not found at: {credentials_path}")
