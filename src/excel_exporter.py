@@ -1,5 +1,7 @@
 import logging
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+import os
+import subprocess
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QVBoxLayout, QWidget
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -70,7 +72,23 @@ class ExcelExporter:
 
             wb.save(filename)
 
-            QMessageBox.information(parent, "Export Complete", f"Data exported to {filename}")
+            # Create a custom message box with an "Open File" button
+            msg_box = QMessageBox(parent)
+            msg_box.setWindowTitle("Export Complete")
+            msg_box.setText(f"Data exported to {filename}")
+
+            open_button = QPushButton("Open File")
+            open_button.clicked.connect(lambda: ExcelExporter.open_file(filename))
+
+            layout = QVBoxLayout()
+            layout.addWidget(open_button)
+
+            widget = QWidget()
+            widget.setLayout(layout)
+
+            msg_box.layout().addWidget(widget, 1, 1)
+            msg_box.exec()
+
         except Exception as e:
             logging.error(f"Error exporting to Excel: {e}")
             QMessageBox.critical(parent, "Error", f"Failed to export to Excel: {str(e)}")
@@ -108,3 +126,15 @@ class ExcelExporter:
             "",  # Megjegyzés ideje (not available)
             row_data[-1]  # Véglegesítés ideje (LastModified)
         ]
+
+    @staticmethod
+    def open_file(filename):
+        if os.path.exists(filename):
+            if os.name == 'nt':  # For Windows
+                os.startfile(filename)
+            elif os.name == 'posix':  # For macOS and Linux
+                subprocess.call(('open', filename))
+            else:
+                logging.error("Unsupported operating system")
+        else:
+            logging.error(f"File not found: {filename}")
