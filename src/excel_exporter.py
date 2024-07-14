@@ -1,11 +1,14 @@
 import logging
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+import os
+import subprocess
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QVBoxLayout, QWidget
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 class ExcelExporter:
     @staticmethod
-    def export_to_excel(parent, company_table):
+    def export_to_excel(parent, company_table, collection):
         try:
             filename, _ = QFileDialog.getSaveFileName(parent, "Export Excel", "", "Excel Files (*.xlsx)")
             if not filename:
@@ -14,11 +17,18 @@ class ExcelExporter:
             if not filename.endswith('.xlsx'):
                 filename += '.xlsx'
 
-            headers = [
-                "Telephely név", "Telephely kód", "Összes terminál igény", "Kiadva", "Kihelyezés",
-                "Áram", "Elosztó", "Szoftver", "Teszt", "Véglegesítve", "Megjegyzés",
-                "Megjegyzés ideje", "Véglegesités ideje"
-            ]
+            if collection == "Company_Install":
+                headers = [
+                    "Telephely név", "Összes terminál igény", "Kiadva", "Telepítés",
+                    "Áram", "Elosztó", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín",
+                    "Teszt", "Véglegesítve", "Megjegyzés",
+                    "Megjegyzés ideje", "Véglegesítés ideje"
+                ]
+            else:  # Company_Demolition
+                headers = [
+                    "Telephely név", "Összes terminál igény", "Bontás", "Felszerelés", "Bázis Leszerelés",
+                    "Megjegyzés", "Megjegyzés ideje", "Véglegesítés ideje"
+                ]
 
             wb = Workbook()
             ws = wb.active
@@ -33,35 +43,98 @@ class ExcelExporter:
             # Add data
             for row in range(company_table.rowCount()):
                 row_data = []
-                for col in range(1, company_table.columnCount()):  # Start from 1 to skip 'Select' column
+                for col in range(1, company_table.columnCount()):
                     item = company_table.item(row, col)
                     value = item.text() if item else ""
                     if value.lower() in ['true', 'false', 'van', 'nincs']:
                         value = "Van" if value.lower() in ['true', 'van'] else "Nincs"
                     row_data.append(value)
 
-                # Map the data to the correct columns
-                mapped_data = [
-                    row_data[1] if len(row_data) > 1 else "",  # Telephely név (CompanyName)
-                    row_data[0] if len(row_data) > 0 else "",  # Telephely kód (ID)
-                    "",  # Összes terminál igény (not available)
-                    "Van" if row_data[4] == "KIADVA" else "Nincs" if len(row_data) > 4 else "",  # Kiadva
-                    row_data[4] if len(row_data) > 4 else "",  # Kihelyezés (Telepítés)
-                    row_data[5] if len(row_data) > 5 else "",  # Áram
-                    row_data[6] if len(row_data) > 6 else "",  # Elosztó
-                    row_data[8] if len(row_data) > 8 else "",  # Szoftver
-                    "Van" if row_data[4] == "HELYSZINEN_TESZTELVE" else "Nincs" if len(row_data) > 4 else "",  # Teszt
-                    "Van" if row_data[4] == "KIRAKVA" else "Nincs" if len(row_data) > 4 else "",  # Véglegesítve
-                    "",  # Megjegyzés (not available)
-                    "",  # Megjegyzés ideje (not available)
-                    row_data[-1] if row_data else ""  # Véglegesités ideje (LastModified)
-                ]
+                if collection == "Company_Install":
+                    mapped_data = ExcelExporter.map_install_data(row_data)
+                else:  # Company_Demolition
+                    mapped_data = ExcelExporter.map_demolition_data(row_data)
 
                 ws.append(mapped_data)
 
+            # Auto-adjust column widths
+            for col in ws.columns:
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(cell.value)
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column].width = adjusted_width
+
             wb.save(filename)
 
-            QMessageBox.information(parent, "Export Complete", f"Data exported to {filename}")
+            # Create a custom message box with an "Open File" button
+            msg_box = QMessageBox(parent)
+            msg_box.setWindowTitle("Export Complete")
+            msg_box.setText(f"Data exported to {filename}")
+
+            open_button = QPushButton("Open File")
+            open_button.clicked.connect(lambda: ExcelExporter.open_file(filename))
+
+            layout = QVBoxLayout()
+            layout.addWidget(open_button)
+
+            widget = QWidget()
+            widget.setLayout(layout)
+
+            msg_box.layout().addWidget(widget, 1, 1)
+            msg_box.exec()
+
         except Exception as e:
             logging.error(f"Error exporting to Excel: {e}")
             QMessageBox.critical(parent, "Error", f"Failed to export to Excel: {str(e)}")
+
+    @staticmethod
+    def map_install_data(row_data):
+        return [
+            row_data[1],  # Telephely név (CompanyName)
+            row_data[3],  # Összes terminál igény (Quantity)
+            "Van" if row_data[5] == "KIADVA" else "Nincs",  # Kiadva
+            row_data[5],  # Telepítés
+            row_data[6],  # Áram
+            row_data[7],  # Elosztó
+            row_data[8],  # Hálózat
+            row_data[9],  # PTG
+            row_data[10],  # Szoftver
+            row_data[11],  # Param
+            row_data[12],  # Helyszín
+            "Van" if row_data[5] == "HELYSZINEN_TESZTELVE" else "Nincs",  # Teszt
+            "Van" if row_data[5] == "KIRAKVA" else "Nincs",  # Véglegesítve
+            "",  # Megjegyzés (not available)
+            "",  # Megjegyzés ideje (not available)
+            row_data[-1]  # Véglegesítés ideje (LastModified)
+        ]
+
+    @staticmethod
+    def map_demolition_data(row_data):
+        return [
+            row_data[1],  # Telephely név (CompanyName)
+            row_data[3],  # Összes terminál igény (Quantity)
+            row_data[5],  # Bontás
+            row_data[6],  # Felszerelés
+            "Van" if row_data[7] == "True" else "Nincs",  # Bázis Leszerelés
+            "",  # Megjegyzés (not available)
+            "",  # Megjegyzés ideje (not available)
+            row_data[-1]  # Véglegesítés ideje (LastModified)
+        ]
+
+    @staticmethod
+    def open_file(filename):
+        if os.path.exists(filename):
+            if os.name == 'nt':  # For Windows
+                os.startfile(filename)
+            elif os.name == 'posix':  # For macOS and Linux
+                subprocess.call(('open', filename))
+            else:
+                logging.error("Unsupported operating system")
+        else:
+            logging.error(f"File not found: {filename}")

@@ -16,7 +16,7 @@ def main():
         app = QApplication(sys.argv)
 
         # Initialize FirestoreService
-        credentials_path = r"C:\Users\Balogh Csaba\IdeaProjects\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-a27b27e8c7.json"
+        credentials_path = r"C:\Users\Balogh Csaba\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-331f965683.json"
 
         if not os.path.exists(credentials_path):
             raise FileNotFoundError(f"Firebase credentials file not found at: {credentials_path}")

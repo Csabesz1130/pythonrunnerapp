@@ -6,7 +6,7 @@ import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
                              QFileDialog, QApplication, QCheckBox, QAbstractItemView)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from src.company_details_view_install import CompanyDetailsViewInstall
 from src.company_details_view_demolition import CompanyDetailsViewDemolition
@@ -14,6 +14,8 @@ from src.edit_field_dialog import EditFieldDialog
 from src.firestore_service import FirestoreService
 from src.excel_exporter import ExcelExporter
 from src.table_filter import FilterableTableView
+from src.excel_exporter import ExcelExporter  # Make sure to import this
+
 
 class MainWindow(QMainWindow):
     def __init__(self, firestore_service):
@@ -24,7 +26,10 @@ class MainWindow(QMainWindow):
         self.firestore_service = firestore_service
         self.current_sort_column = -1
         self.current_sort_order = Qt.SortOrder.AscendingOrder
-        self.filter_inputs = []  # New attribute to store filter inputs
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.filter_companies)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -40,6 +45,7 @@ class MainWindow(QMainWindow):
 
         # Festival combo box
         self.festival_combo = QComboBox()
+        self.festival_combo.currentIndexChanged.connect(self.load_companies)
         top_layout.addWidget(self.festival_combo)
 
         # Radio buttons for collection selection
@@ -52,24 +58,25 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.install_radio)
         top_layout.addWidget(self.demolition_radio)
 
-        # Search input and button (keep existing search functionality)
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search companies...")
-        top_layout.addWidget(self.search_input)
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.filter_companies)
-        top_layout.addWidget(self.search_button)
+        # Connect radio buttons to on_collection_changed
+        self.install_radio.toggled.connect(self.on_collection_changed)
+        self.demolition_radio.toggled.connect(self.on_collection_changed)
 
         self.main_layout.addLayout(top_layout)
+
+        # General search input
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search companies...")
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        self.main_layout.addWidget(self.search_input)
 
         # Filter inputs layout
         self.filter_layout = QHBoxLayout()
         self.main_layout.addLayout(self.filter_layout)
 
-        # Select all checkbox
-        self.select_all_checkbox = QCheckBox("Select All")
-        self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
-        self.main_layout.addWidget(self.select_all_checkbox)
+        # Initialize filter inputs
+        self.filter_inputs = []
+        self.update_filter_inputs()
 
         # Company table
         self.company_table = QTableWidget()
@@ -80,6 +87,11 @@ class MainWindow(QMainWindow):
         self.company_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
         self.main_layout.addWidget(self.company_table)
 
+        # Select all checkbox
+        self.select_all_checkbox = QCheckBox("Select All")
+        self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
+        self.main_layout.addWidget(self.select_all_checkbox)
+
         # Button layout
         button_layout = QHBoxLayout()
 
@@ -87,8 +99,8 @@ class MainWindow(QMainWindow):
         self.add_company_button.clicked.connect(self.add_company)
         button_layout.addWidget(self.add_company_button)
 
-        self.export_button = QPushButton("Export List")
-        self.export_button.clicked.connect(self.export_to_csv)
+        self.export_button = QPushButton("Export to Excel")
+        self.export_button.clicked.connect(self.export_to_excel)
         button_layout.addWidget(self.export_button)
 
         self.refresh_button = QPushButton("Refresh")
@@ -101,9 +113,49 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(button_layout)
 
-        # Connect radio buttons to load_companies and update_filter_inputs
-        self.install_radio.toggled.connect(self.on_collection_changed)
-        self.demolition_radio.toggled.connect(self.on_collection_changed)
+    def on_search_text_changed(self):
+        # Reset the timer every time the text changes
+        self.search_timer.stop()
+        self.search_timer.start(300)  # Wait for 300 ms before filtering
+
+    def filter_companies(self):
+        search_text = self.search_input.text().lower()
+        for row in range(self.company_table.rowCount()):
+            should_show = False
+            for col in range(self.company_table.columnCount()):
+                item = self.company_table.item(row, col)
+                if item and search_text in item.text().lower():
+                    should_show = True
+                    break
+            self.company_table.setRowHidden(row, not should_show)
+
+    def apply_filters(self):
+        search_text = self.search_input.text().lower()
+        for row in range(self.company_table.rowCount()):
+            should_show = True
+
+            # Apply general search filter
+            if search_text:
+                row_matches_search = False
+                for col in range(self.company_table.columnCount()):
+                    item = self.company_table.item(row, col)
+                    if item and search_text in item.text().lower():
+                        row_matches_search = True
+                        break
+                if not row_matches_search:
+                    should_show = False
+
+            # Apply column-specific filters
+            if should_show:
+                for col, filter_input in enumerate(self.filter_inputs):
+                    filter_text = filter_input.text().lower()
+                    if filter_text:
+                        item = self.company_table.item(row, col)
+                        if item is None or filter_text not in item.text().lower():
+                            should_show = False
+                            break
+
+            self.company_table.setRowHidden(row, not should_show)
 
     def select_all_changed(self, state):
         if state == Qt.CheckState.Checked:
@@ -255,6 +307,27 @@ class MainWindow(QMainWindow):
             specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
         return ["Select"] + common_headers + specific_headers + ["Last Modified"]
 
+    def update_filter_inputs(self):
+        # Clear existing filter inputs
+        for input in self.filter_inputs:
+            input.deleteLater()
+        self.filter_inputs.clear()
+
+        # Clear the filter layout
+        while self.filter_layout.count():
+            item = self.filter_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add new filter inputs
+        headers = self.get_headers_for_collection(self.get_current_collection())
+        for header in headers:
+            filter_input = QLineEdit()
+            filter_input.setPlaceholderText(f"Filter {header}...")
+            filter_input.textChanged.connect(self.apply_filters)
+            self.filter_layout.addWidget(filter_input)
+            self.filter_inputs.append(filter_input)
+
     def open_company_details(self, index):
         try:
             company_id = self.company_table.item(index.row(), 1).text()  # Assuming ID is in column 1
@@ -296,8 +369,9 @@ class MainWindow(QMainWindow):
             logging.error(f"Error adding company: {e}")
             QMessageBox.critical(self, "Error", f"Failed to add company: {str(e)}")
 
-    def export_to_csv(self):
-        ExcelExporter.export_to_excel(self, self.company_table)
+    def export_to_excel(self):
+        collection = self.get_current_collection()
+        ExcelExporter.export_to_excel(self, self.company_table, collection)
 
     def bulk_edit(self):
         selected_rows = set()
@@ -317,46 +391,54 @@ class MainWindow(QMainWindow):
     def apply_bulk_edit(self, field, value, selected_rows):
         collection = self.get_current_collection()
         field_mapping = self.get_field_mapping(collection)
-        db_field = field_mapping.get(field, field)  # Use the mapping if it exists, otherwise use the field name as is
+        db_field = field_mapping.get(field, field)
 
         success_count = 0
         fail_count = 0
         not_found_ids = []
 
-        for row in selected_rows:
-            company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
-            data = {db_field: value}
-            logging.debug(f"Attempting to update company: ID={company_id}, Field={db_field}, Value={value}")
-            try:
-                success = self.firestore_service.update_company(collection, company_id, data)
-                if success:
-                    # Update the table
-                    col = self.get_headers_for_collection(collection).index(field)
-                    display_value = self.get_display_value(value)
-                    self.company_table.item(row, col).setText(display_value)
-                    success_count += 1
-                    logging.info(f"Successfully updated company: ID={company_id}")
-                else:
+        # Disable UI elements during update, should not be....
+        self.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        try:
+            for row in selected_rows:
+                company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
+                data = {db_field: value}
+
+                try:
+                    success = self.firestore_service.update_company(collection, company_id, data)
+                    if success:
+                        success_count += 1
+                        logging.info(f"Successfully updated company: ID={company_id}")
+                    else:
+                        fail_count += 1
+                        not_found_ids.append(company_id)
+                        logging.warning(f"Failed to update company: ID={company_id}")
+                except Exception as e:
+                    logging.error(f"Error updating company {company_id}: {str(e)}")
                     fail_count += 1
                     not_found_ids.append(company_id)
-                    logging.warning(f"Failed to update company: ID={company_id}")
-            except Exception as e:
-                logging.error(f"Error updating company {company_id}: {str(e)}")
-                fail_count += 1
-                not_found_ids.append(company_id)
 
-        # Show result message
+            # Show result message
+            self.show_bulk_edit_results(success_count, fail_count, not_found_ids)
+
+        finally:
+            # Re-enable UI elements and restore cursor
+            self.setEnabled(True)
+            QApplication.restoreOverrideCursor()
+
+        # Reload data after all updates
+        self.load_companies()
+
+    def show_bulk_edit_results(self, success_count, fail_count, not_found_ids):
         if success_count > 0:
-            QMessageBox.information(self, "Bulk Edit Result",
-                                    f"Successfully updated {success_count} companies.")
-
+            QMessageBox.information(self, "Bulk Edit Result", f"Successfully updated {success_count} companies.")
         if fail_count > 0:
             error_msg = f"Failed to update {fail_count} companies.\n"
             if not_found_ids:
                 error_msg += f"The following IDs were not found or couldn't be updated:\n{', '.join(not_found_ids)}"
             QMessageBox.warning(self, "Bulk Edit Result", error_msg)
-
-        self.load_companies()  # Reload to ensure all data is up to date
 
     def get_display_value(self, value):
         if isinstance(value, bool):
