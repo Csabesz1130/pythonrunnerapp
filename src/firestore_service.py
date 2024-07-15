@@ -38,15 +38,23 @@ class FirestoreService:
             if festival and festival != "All Festivals":
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
 
-            # Fetch all documents without limit
             companies = companies_ref.get()
+
+            if not companies:
+                logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
+                return []
 
             result = []
             for company in companies:
                 company_data = company.to_dict()
                 company_data['firestore_id'] = company.id
+
+                # Get the count of items in the SN subcollection
+                sn_count = self.get_sn_count(collection, company.id)
+                company_data['sn_count'] = sn_count
+
                 result.append(company_data)
-                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}")
+                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
 
             logging.info(f"Successfully fetched {len(result)} companies")
             return result
