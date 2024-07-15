@@ -1,3 +1,4 @@
+from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
                              QPushButton, QComboBox, QCheckBox, QMessageBox)
 from PyQt6.QtCore import pyqtSignal, QDateTime
@@ -32,6 +33,10 @@ class CompanyDetailsViewInstall(QDialog):
 
         self.program_combo = QComboBox()
         form.addRow("Program:", self.program_combo)
+
+        self.quantity_edit = QLineEdit()
+        self.quantity_edit.setValidator(QIntValidator(0, 999999))
+        form.addRow("Quantity:", self.quantity_edit)
 
         self.felderites_combo = QComboBox()
         self.felderites_combo.addItems(["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
@@ -112,6 +117,16 @@ class CompanyDetailsViewInstall(QDialog):
             "CreatedAt": current_time
         }
         self.update_ui_with_data()
+
+    def check_id_exists(self):
+        new_id = self.id_edit.text()
+        if new_id and self.is_new_company:
+            exists = self.firestore_service.check_id_exists("Company_Install", new_id)
+            if exists:
+                self.id_edit.setStyleSheet("background-color: #FFCCCB;")
+                QMessageBox.warning(self, "ID Exists", "This ID already exists. Please choose a different one.")
+            else:
+                self.id_edit.setStyleSheet("background-color: #90EE90;")
 
     def update_ui_with_data(self):
         self.id_label.setText(str(self.company_data.get("Id", "")))

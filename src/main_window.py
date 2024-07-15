@@ -300,12 +300,12 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def get_headers_for_collection(self, collection):
-        common_headers = ["ID", "Name", "Program"]
+        common_headers = ["ID", "Name", "Program", "Quantity"]
         if collection == "Company_Install":
             specific_headers = ["Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
         else:  # Company_Demolition
             specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
-        return ["Select"] + common_headers + specific_headers + ["Last Modified"]
+        return common_headers + specific_headers + ["Last Modified"]
 
     def update_filter_inputs(self):
         # Clear existing filter inputs
@@ -450,6 +450,7 @@ class MainWindow(QMainWindow):
             "Id": "ID",
             "CompanyName": "Name",
             "ProgramName": "Program",
+            "quantity": "Quantity",
             "LastModified": "Last Modified"
         }
 

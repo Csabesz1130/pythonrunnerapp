@@ -83,28 +83,24 @@ class FirestoreService:
         logging.info(f"Adding new company to collection: {collection}")
         logging.debug(f"Company data: {data}")
         try:
-            doc_ref = self.db.collection(collection).document(data['Id'])
+            if self.check_id_exists(collection, data['Id']):
+                raise ValueError("Company with this ID already exists")
+
+            doc_ref = self.db.collection(collection).document()
             doc_ref.set(data)
             logging.info(f"Successfully added company with ID: {data['Id']}")
-            return data['Id']
+            return doc_ref.id
         except Exception as e:
             logging.error(f"Error adding company: {e}", exc_info=True)
             raise
 
-    def update_company(self, collection, company_id, data):
-        logging.info(f"Updating company - Collection: {collection}, ID: {company_id}")
+    def update_company(self, collection, firestore_id, data):
+        logging.info(f"Updating company - Collection: {collection}, Firestore ID: {firestore_id}")
         logging.debug(f"Update data: {data}")
         try:
-            doc_ref = self.db.collection(collection).document(company_id)
-
-            # Remove Id and LastModified from the update data
-            data.pop('Id', None)
-            data.pop('LastModified', None)
-
-            # Update the document
+            doc_ref = self.db.collection(collection).document(firestore_id)
             doc_ref.update(self.prepare_data_for_save(data))
-
-            logging.info(f"Successfully updated company with ID: {company_id}")
+            logging.info(f"Successfully updated company with Firestore ID: {firestore_id}")
             return True
         except Exception as e:
             logging.error(f"Error updating company: {e}")
@@ -161,3 +157,6 @@ class FirestoreService:
 
     def server_timestamp(self):
         return firestore.SERVER_TIMESTAMP
+
+    def check_id_exists(self, collection, param):
+        pass
