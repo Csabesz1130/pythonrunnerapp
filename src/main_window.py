@@ -497,30 +497,45 @@ class MainWindow(QMainWindow):
         return {**common_fields, **specific_fields}
 
     def sort_table(self, column):
-        def custom_sort(item):
-            value = item.text()
-            try:
-                return int(value)
-            except ValueError:
-                try:
-                    return float(value)
-                except ValueError:
-                    return float('inf')  # Place non-numeric values at the end
-
-        items = [self.company_table.item(row, column) for row in range(self.company_table.rowCount())]
-        sorted_items = sorted(items, key=custom_sort, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
-
         self.company_table.setSortingEnabled(False)
-        for row, item in enumerate(sorted_items):
-            source_row = self.company_table.row(item)
-            if source_row != row:
-                self.company_table.insertRow(row)
-                for col in range(self.company_table.columnCount()):
-                    self.company_table.setItem(row, col, self.company_table.takeItem(source_row, col))
-                self.company_table.removeRow(source_row + 1 if source_row > row else source_row)
-        self.company_table.setSortingEnabled(True)
+        header = self.company_table.horizontalHeaderItem(column).text()
 
+        def get_key(row):
+            item = self.company_table.item(row, column)
+            if item is None:
+                return ""
+            value = item.text().strip()
+            if header in ["Igény", "Kiadott"]:
+                try:
+                    return int(value)
+                except ValueError:
+                    try:
+                        return float(value)
+                    except ValueError:
+                        return float('-inf')  # Place non-numeric values at the beginning
+            return value
+
+        row_count = self.company_table.rowCount()
+        rows = list(range(row_count))
+        sorted_rows = sorted(rows, key=get_key, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
+
+        for i, row in enumerate(sorted_rows):
+            if i != row:
+                # Swap rows
+                for col in range(self.company_table.columnCount()):
+                    self.company_table.insertRow(i)
+                    for j in range(self.company_table.columnCount()):
+                        self.company_table.setItem(i, j, self.company_table.takeItem(row + 1, j))
+                    self.company_table.removeRow(row + 1)
+
+        self.current_sort_column = column
+        self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+
+        self.company_table.setSortingEnabled(True)
         self.company_table.horizontalHeader().setSortIndicator(column, self.current_sort_order)
+
+    def on_header_clicked(self, logical_index):
+        self.sort_table(logical_index)
 
 
 if __name__ == "__main__":
