@@ -208,42 +208,38 @@ class MainWindow(QMainWindow):
                 festival = None
 
             companies = self.firestore_service.get_companies(collection, festival)
+            logging.info(f"Received {len(companies)} companies from FirestoreService")
 
             self.company_table.setSortingEnabled(False)
-            self.company_table.clear()
+            self.company_table.setRowCount(0)  # Clear existing rows
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
             self.company_table.setHorizontalHeaderLabels(headers)
-            self.company_table.setRowCount(len(companies))
 
-            for row, company in enumerate(companies):
+            for company in companies:
+                row_position = self.company_table.rowCount()
+                self.company_table.insertRow(row_position)
                 for col, header in enumerate(headers):
                     if header == "ID":
-                        value = company.get('Id', '')  # Use 'Id' field, not Firestore document ID
+                        value = company.get('Id', '')
                     else:
                         value = self.get_company_value(company, header, collection)
                     item = QTableWidgetItem(str(value))
-                    self.company_table.setItem(row, col, item)
+                    self.company_table.setItem(row_position, col, item)
 
             self.company_table.resizeColumnsToContents()
+
+            logging.info(f"Populated table with {self.company_table.rowCount()} rows")
 
             if not companies:
                 logging.info(f"No companies found for collection: {collection}, festival: {festival}")
                 QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
 
             self.update_filter_inputs()
-
-            # Reapply sorting if a column was previously sorted
-            if self.current_sort_column != -1:
-                if self.get_headers_for_collection(collection)[self.current_sort_column] in ["Igény", "Kiadott"]:
-                    self.sort_table(self.current_sort_column)
-                else:
-                    self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
-
             self.company_table.setSortingEnabled(True)
 
         except Exception as e:
-            logging.error(f"Error loading companies: {e}")
+            logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
 
     def get_current_collection(self):
