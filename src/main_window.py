@@ -172,18 +172,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
 
     def on_header_clicked(self, logical_index):
-        if self.current_sort_column == logical_index:
-            # Toggle sort order if clicking on the same column
-            if self.current_sort_order == Qt.SortOrder.AscendingOrder:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder
+        header = self.get_headers_for_collection(self.get_current_collection())[logical_index]
+        if header in ["Igény", "Kiadott"]:
+            if self.current_sort_column == logical_index:
+                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
             else:
                 self.current_sort_order = Qt.SortOrder.AscendingOrder
-        else:
-            # New column, start with ascending order
             self.current_sort_column = logical_index
-            self.current_sort_order = Qt.SortOrder.AscendingOrder
-
-        self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+            self.sort_table(logical_index)
+        else:
+            # For other columns, use the default sorting
+            if self.current_sort_column == logical_index:
+                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+            else:
+                self.current_sort_column = logical_index
+                self.current_sort_order = Qt.SortOrder.AscendingOrder
+            self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
 
     def filter_companies(self):
         search_text = self.search_input.text().lower()
@@ -205,6 +209,7 @@ class MainWindow(QMainWindow):
 
             companies = self.firestore_service.get_companies(collection, festival)
 
+            self.company_table.setSortingEnabled(False)
             self.company_table.clear()
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
@@ -228,6 +233,15 @@ class MainWindow(QMainWindow):
 
             self.update_filter_inputs()
 
+            # Reapply sorting if a column was previously sorted
+            if self.current_sort_column != -1:
+                if self.get_headers_for_collection(collection)[self.current_sort_column] in ["Igény", "Kiadott"]:
+                    self.sort_table(self.current_sort_column)
+                else:
+                    self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+
+            self.company_table.setSortingEnabled(True)
+
         except Exception as e:
             logging.error(f"Error loading companies: {e}")
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
@@ -245,7 +259,7 @@ class MainWindow(QMainWindow):
         if header == "Igény":
             return str(value) if value is not None else ""
         elif header == "Kiadott":
-            return str(company.get('sn_count', 0))  # We'll add this field in FirestoreService
+            return str(company.get('sn_count', 0))
         elif header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
             return "Van" if value else "Nincs"
         elif header == "Last Modified":
@@ -481,6 +495,33 @@ class MainWindow(QMainWindow):
             specific_fields = {}
 
         return {**common_fields, **specific_fields}
+
+    def sort_table(self, column):
+        def custom_sort(item):
+            value = item.text()
+            try:
+                return int(value)
+            except ValueError:
+                try:
+                    return float(value)
+                except ValueError:
+                    return float('inf')  # Place non-numeric values at the end
+
+        items = [self.company_table.item(row, column) for row in range(self.company_table.rowCount())]
+        sorted_items = sorted(items, key=custom_sort, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
+
+        self.company_table.setSortingEnabled(False)
+        for row, item in enumerate(sorted_items):
+            source_row = self.company_table.row(item)
+            if source_row != row:
+                self.company_table.insertRow(row)
+                for col in range(self.company_table.columnCount()):
+                    self.company_table.setItem(row, col, self.company_table.takeItem(source_row, col))
+                self.company_table.removeRow(source_row + 1 if source_row > row else source_row)
+        self.company_table.setSortingEnabled(True)
+
+        self.company_table.horizontalHeader().setSortIndicator(column, self.current_sort_order)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

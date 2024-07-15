@@ -73,22 +73,28 @@ class FirestoreService:
     def get_company(self, collection, company_id):
         logging.info(f"Fetching company details - Collection: {collection}, ID: {company_id}")
         try:
-            query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
-            docs = query.get()
+            # First, try to get the document directly by its Firestore ID
+            doc_ref = self.db.collection(collection).document(company_id)
+            doc = doc_ref.get()
 
-            if docs:
-                company_data = docs[0].to_dict()
-                company_data['firestore_id'] = docs[0].id
-
-                # Get the count of items in the SN subcollection
-                sn_count = self.get_sn_count(collection, docs[0].id)
-                company_data['sn_count'] = sn_count
-
-                logging.info(f"Successfully fetched company data for ID: {company_id}")
+            if doc.exists:
+                company_data = doc.to_dict()
+                company_data['firestore_id'] = doc.id
+                logging.info(f"Successfully fetched company data for Firestore ID: {company_id}")
                 return company_data
             else:
-                logging.warning(f"No company found with ID: {company_id} in collection: {collection}")
-                return None
+                # If not found, try querying by the 'Id' field
+                query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
+                docs = query.get()
+
+                if docs:
+                    company_data = docs[0].to_dict()
+                    company_data['firestore_id'] = docs[0].id
+                    logging.info(f"Successfully fetched company data for ID: {company_id}")
+                    return company_data
+                else:
+                    logging.warning(f"No company found with ID: {company_id} in collection: {collection}")
+                    return None
         except Exception as e:
             logging.error(f"Error fetching company details: {e}", exc_info=True)
             return None
@@ -98,26 +104,37 @@ class FirestoreService:
         logging.info(f"Generated new ID: {new_id}")
         return new_id
 
-    def add_company(self, collection, data):
-        logging.info(f"Adding new company to collection: {collection}")
-        logging.debug(f"Company data: {data}")
+    def get_sn_list(self, company_id):
+        logging.info(f"Fetching SN list for company ID: {company_id}")
         try:
-            # Create a new document with a generated ID
+            sn_collection = self.db.collection("Company_Install").document(company_id).collection('SN')
+            sn_docs = sn_collection.get()
+            sn_list = [doc.to_dict()['SN'] for doc in sn_docs if 'SN' in doc.to_dict()]
+            logging.info(f"Fetched {len(sn_list)} SN entries for company {company_id}")
+            return sn_list
+        except Exception as e:
+            logging.error(f"Error fetching SN list for company {company_id}: {e}", exc_info=True)
+            return []
+
+    def add_company(self, collection, data):
+        try:
             new_doc_ref = self.db.collection(collection).document()
+            sn_list = data.pop('SN', [])  # Remove SN from main data
             data['LastModified'] = self.server_timestamp()
             data['CreatedAt'] = self.server_timestamp()
             new_doc_ref.set(data)
-            logging.info(f"Successfully added company with ID: {data['Id']}")
-            return new_doc_ref.id  # Return the Firestore document ID
+
+            # Add SN documents to subcollection
+            for sn in sn_list:
+                new_doc_ref.collection('SN').add({'SN': sn})
+
+            return new_doc_ref.id
         except Exception as e:
-            logging.error(f"Error adding company: {e}", exc_info=True)
+            logging.error(f"Error adding company: {e}")
             raise
 
     def update_company(self, collection, company_id, data):
-        logging.info(f"Updating company - Collection: {collection}, Company ID: {company_id}")
-        logging.debug(f"Update data: {data}")
         try:
-            # Find the document by the 'Id' field
             query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
             docs = query.get()
 
@@ -125,9 +142,14 @@ class FirestoreService:
                 raise ValueError(f"No company found with ID: {company_id}")
 
             doc_ref = docs[0].reference
+            sn_list = data.pop('SN', None)  # Remove SN from main data
             data['LastModified'] = self.server_timestamp()
             doc_ref.update(self.prepare_data_for_save(data))
-            logging.info(f"Successfully updated company with ID: {company_id}")
+
+            # Update SN list if provided
+            if sn_list is not None:
+                self.update_sn_list(company_id, sn_list)
+
             return True
         except Exception as e:
             logging.error(f"Error updating company: {e}")
