@@ -1,6 +1,6 @@
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
-                             QPushButton, QComboBox, QCheckBox, QMessageBox)
+                             QPushButton, QComboBox, QCheckBox, QMessageBox, QTextEdit)
 from PyQt6.QtCore import pyqtSignal, QDateTime
 import logging
 
@@ -12,21 +12,23 @@ class CompanyDetailsViewInstall(QDialog):
         self.firestore_service = firestore_service
         self.company_id = company_id
         self.company_data = company_data or {}
-        self.is_new_company = not company_id
+        self.is_new_company = company_id is None
         logging.debug(f"Initializing CompanyDetailsViewInstall with company_id: {company_id}, company_data: {self.company_data}")
         self.setup_ui()
         self.populate_festivals()
-        if not self.is_new_company:
+        if self.is_new_company:
+            self.initialize_new_company()
+        else:
             self.update_ui_with_data()
-        self.set_edit_mode(True)
+        self.set_edit_mode(True if self.is_new_company else False)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
-        self.id_label = QLineEdit()
-        self.id_label.setReadOnly(True)
-        form.addRow("ID:", self.id_label)
+        self.id_edit = QLineEdit()
+        self.id_edit.setReadOnly(True)
+        form.addRow("ID:", self.id_edit)
 
         self.name_edit = QLineEdit()
         form.addRow("Company Name:", self.name_edit)
@@ -36,7 +38,14 @@ class CompanyDetailsViewInstall(QDialog):
 
         self.quantity_edit = QLineEdit()
         self.quantity_edit.setValidator(QIntValidator(0, 999999))
-        form.addRow("Quantity:", self.quantity_edit)
+        form.addRow("Igény:", self.quantity_edit)
+
+        self.kiadott_label = QLineEdit()
+        self.kiadott_label.setReadOnly(True)
+        form.addRow("Kiadott:", self.kiadott_label)
+
+        self.sn_edit = QTextEdit()
+        form.addRow("SN:", self.sn_edit)
 
         self.felderites_combo = QComboBox()
         self.felderites_combo.addItems(["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
@@ -128,9 +137,8 @@ class CompanyDetailsViewInstall(QDialog):
                 self.id_edit.setStyleSheet("background-color: #90EE90;")
 
     def update_ui_with_data(self):
-        self.id_label.setText(str(self.company_data.get("Id", "")))
+        self.id_edit.setText(str(self.company_data.get("Id", "")))
         self.name_edit.setText(self.company_data.get("CompanyName", ""))
-        self.name_edit.setReadOnly(False)  # Ensure Company Name is editable
 
         program_name = self.company_data.get("ProgramName", "")
         index = self.program_combo.findText(program_name)
@@ -139,6 +147,12 @@ class CompanyDetailsViewInstall(QDialog):
         elif program_name:
             self.program_combo.addItem(program_name)
             self.program_combo.setCurrentText(program_name)
+
+        self.quantity_edit.setText(str(self.company_data.get("quantity", "")))
+
+        sn_list = self.company_data.get("SN", [])
+        self.kiadott_label.setText(str(len(sn_list)))
+        self.sn_edit.setPlainText("\n".join(sn_list))
 
         self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
         self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
@@ -151,8 +165,8 @@ class CompanyDetailsViewInstall(QDialog):
         self.helyszin_check.setChecked(self.company_data.get("9", False))
 
         last_modified = self.company_data.get("LastModified", "")
-        if isinstance(last_modified, QDateTime):
-            last_modified = last_modified.toString("yyyy-MM-dd HH:mm:ss")
+        if isinstance(last_modified, datetime):
+            last_modified = last_modified.strftime("%Y-%m-%d %H:%M:%S")
         self.last_modified_label.setText(str(last_modified))
 
         logging.debug(f"Updated UI with company data: {self.company_data}")
@@ -203,6 +217,8 @@ class CompanyDetailsViewInstall(QDialog):
             data = {
                 "CompanyName": self.name_edit.text(),
                 "ProgramName": self.program_combo.currentText(),
+                "quantity": int(self.quantity_edit.text()) if self.quantity_edit.text() else None,
+                "SN": self.sn_edit.toPlainText().split("\n"),
                 "1": self.felderites_combo.currentText(),
                 "2": self.telepites_combo.currentText(),
                 "3": self.eloszto_check.isChecked(),
@@ -216,7 +232,6 @@ class CompanyDetailsViewInstall(QDialog):
             }
 
             if self.is_new_company:
-                # Generate a new ID for the company
                 new_id = self.firestore_service.generate_id()
                 data["Id"] = new_id
                 data["CreatedAt"] = self.firestore_service.server_timestamp()

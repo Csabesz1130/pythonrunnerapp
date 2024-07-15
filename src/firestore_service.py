@@ -47,9 +47,14 @@ class FirestoreService:
             result = []
             for company in companies:
                 company_data = company.to_dict()
-                company_data['firestore_id'] = company.id  # Store Firestore document ID separately
+                company_data['firestore_id'] = company.id
+
+                # Get the count of items in the SN subcollection
+                sn_count = self.get_sn_count(collection, company.id)
+                company_data['sn_count'] = sn_count
+
                 result.append(company_data)
-                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}")
+                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
 
             logging.info(f"Successfully fetched {len(result)} companies")
             return result
@@ -57,16 +62,28 @@ class FirestoreService:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
             return []
 
+    def get_sn_count(self, collection, company_id):
+        try:
+            sn_collection = self.db.collection(collection).document(company_id).collection('SN')
+            return len(sn_collection.get())
+        except Exception as e:
+            logging.error(f"Error getting SN count for company {company_id}: {e}")
+            return 0
+
     def get_company(self, collection, company_id):
         logging.info(f"Fetching company details - Collection: {collection}, ID: {company_id}")
         try:
-            # Query by the 'Id' field instead of using document ID
             query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
             docs = query.get()
 
             if docs:
                 company_data = docs[0].to_dict()
-                company_data['firestore_id'] = docs[0].id  # Store Firestore document ID separately if needed
+                company_data['firestore_id'] = docs[0].id
+
+                # Get the count of items in the SN subcollection
+                sn_count = self.get_sn_count(collection, docs[0].id)
+                company_data['sn_count'] = sn_count
+
                 logging.info(f"Successfully fetched company data for ID: {company_id}")
                 return company_data
             else:

@@ -242,7 +242,11 @@ class MainWindow(QMainWindow):
             return ""
 
         value = company.get(field, "")
-        if header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
+        if header == "Igény":
+            return str(value) if value is not None else ""
+        elif header == "Kiadott":
+            return str(company.get('sn_count', 0))  # We'll add this field in FirestoreService
+        elif header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
             return "Van" if value else "Nincs"
         elif header == "Last Modified":
             return str(value) if value else ""
@@ -299,9 +303,9 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def get_headers_for_collection(self, collection):
-        common_headers = ["ID", "Name", "Program", "Quantity"]
+        common_headers = ["ID", "Name", "Program"]
         if collection == "Company_Install":
-            specific_headers = ["Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+            specific_headers = ["Igény", "Kiadott", "Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
         else:  # Company_Demolition
             specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
         return common_headers + specific_headers + ["Last Modified"]
@@ -449,12 +453,13 @@ class MainWindow(QMainWindow):
             "Id": "ID",
             "CompanyName": "Name",
             "ProgramName": "Program",
-            "quantity": "Quantity",
             "LastModified": "Last Modified"
         }
 
         if collection == "Company_Install":
             specific_fields = {
+                "quantity": "Igény",
+                "SN": "Kiadott",
                 "1": "Felderítés",
                 "2": "Telepítés",
                 "3": "Elosztó",
