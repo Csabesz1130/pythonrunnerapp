@@ -47,9 +47,9 @@ class FirestoreService:
             result = []
             for company in companies:
                 company_data = company.to_dict()
-                company_data['id'] = company.id  # Ensure the document ID is included
+                company_data['firestore_id'] = company.id  # Store Firestore document ID separately
                 result.append(company_data)
-                logging.debug(f"Fetched company: ID={company.id}, Name={company_data.get('CompanyName', 'N/A')}")
+                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}")
 
             logging.info(f"Successfully fetched {len(result)} companies")
             return result
@@ -60,12 +60,14 @@ class FirestoreService:
     def get_company(self, collection, company_id):
         logging.info(f"Fetching company details - Collection: {collection}, ID: {company_id}")
         try:
-            doc_ref = self.db.collection(collection).document(company_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                company_data = doc.to_dict()
+            # Query by the 'Id' field instead of using document ID
+            query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
+            docs = query.get()
+
+            if docs:
+                company_data = docs[0].to_dict()
+                company_data['firestore_id'] = docs[0].id  # Store Firestore document ID separately if needed
                 logging.info(f"Successfully fetched company data for ID: {company_id}")
-                logging.debug(f"Company data: {company_data}")
                 return company_data
             else:
                 logging.warning(f"No company found with ID: {company_id} in collection: {collection}")
@@ -83,24 +85,32 @@ class FirestoreService:
         logging.info(f"Adding new company to collection: {collection}")
         logging.debug(f"Company data: {data}")
         try:
-            if self.check_id_exists(collection, data['Id']):
-                raise ValueError("Company with this ID already exists")
-
-            doc_ref = self.db.collection(collection).document()
-            doc_ref.set(data)
+            # Create a new document with a generated ID
+            new_doc_ref = self.db.collection(collection).document()
+            data['LastModified'] = self.server_timestamp()
+            data['CreatedAt'] = self.server_timestamp()
+            new_doc_ref.set(data)
             logging.info(f"Successfully added company with ID: {data['Id']}")
-            return doc_ref.id
+            return new_doc_ref.id  # Return the Firestore document ID
         except Exception as e:
             logging.error(f"Error adding company: {e}", exc_info=True)
             raise
 
-    def update_company(self, collection, firestore_id, data):
-        logging.info(f"Updating company - Collection: {collection}, Firestore ID: {firestore_id}")
+    def update_company(self, collection, company_id, data):
+        logging.info(f"Updating company - Collection: {collection}, Company ID: {company_id}")
         logging.debug(f"Update data: {data}")
         try:
-            doc_ref = self.db.collection(collection).document(firestore_id)
+            # Find the document by the 'Id' field
+            query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
+            docs = query.get()
+
+            if not docs:
+                raise ValueError(f"No company found with ID: {company_id}")
+
+            doc_ref = docs[0].reference
+            data['LastModified'] = self.server_timestamp()
             doc_ref.update(self.prepare_data_for_save(data))
-            logging.info(f"Successfully updated company with Firestore ID: {firestore_id}")
+            logging.info(f"Successfully updated company with ID: {company_id}")
             return True
         except Exception as e:
             logging.error(f"Error updating company: {e}")

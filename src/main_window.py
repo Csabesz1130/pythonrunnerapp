@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
             for row, company in enumerate(companies):
                 for col, header in enumerate(headers):
                     if header == "ID":
-                        value = company.get('id', '')  # Use the 'id' field we added in get_companies
+                        value = company.get('Id', '')  # Use 'Id' field, not Firestore document ID
                     else:
                         value = self.get_company_value(company, header, collection)
                     item = QTableWidgetItem(str(value))
@@ -226,7 +226,6 @@ class MainWindow(QMainWindow):
                 logging.info(f"No companies found for collection: {collection}, festival: {festival}")
                 QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
 
-            # Update filter inputs after loading companies
             self.update_filter_inputs()
 
         except Exception as e:
@@ -330,7 +329,7 @@ class MainWindow(QMainWindow):
 
     def open_company_details(self, index):
         try:
-            company_id = self.company_table.item(index.row(), 1).text()  # Assuming ID is in column 1
+            company_id = self.company_table.item(index.row(), 0).text()  # Assuming ID is in the first column (index 0)
             collection = self.get_current_collection()
             company_data = self.firestore_service.get_company(collection, company_id)
 

@@ -99,9 +99,8 @@ class CompanyDetailsViewInstall(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
 
     def initialize_new_company(self):
-        current_time = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
         self.company_data = {
-            "Id": self.company_id,
+            "Id": "",  # This will be set when saving
             "CompanyName": "",
             "ProgramName": "",
             "1": "TELEPÍTHETŐ",
@@ -113,8 +112,8 @@ class CompanyDetailsViewInstall(QDialog):
             "7": False,
             "8": False,
             "9": False,
-            "LastModified": current_time,
-            "CreatedAt": current_time
+            "LastModified": None,  # Set to None for new companies
+            "CreatedAt": None  # Set to None, will be updated when saving
         }
         self.update_ui_with_data()
 
@@ -201,9 +200,7 @@ class CompanyDetailsViewInstall(QDialog):
 
     def save_company(self):
         try:
-            current_time = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
             data = {
-                "Id": self.company_id,
                 "CompanyName": self.name_edit.text(),
                 "ProgramName": self.program_combo.currentText(),
                 "1": self.felderites_combo.currentText(),
@@ -215,18 +212,23 @@ class CompanyDetailsViewInstall(QDialog):
                 "7": self.szoftver_check.isChecked(),
                 "8": self.param_check.isChecked(),
                 "9": self.helyszin_check.isChecked(),
-                "LastModified": current_time
+                "LastModified": self.firestore_service.server_timestamp()
             }
 
-            if "CreatedAt" not in self.company_data:
-                data["CreatedAt"] = current_time
+            if self.is_new_company:
+                # Generate a new ID for the company
+                new_id = self.firestore_service.generate_id()
+                data["Id"] = new_id
+                data["CreatedAt"] = self.firestore_service.server_timestamp()
+                self.company_id = self.firestore_service.add_company("Company_Install", data)
+                self.is_new_company = False
+            else:
+                data["Id"] = self.company_id
+                self.firestore_service.update_company("Company_Install", self.company_id, data)
 
-            self.firestore_service.update_company("Company_Install", self.company_id, data)
-            logging.info(f"{'Updated' if 'CreatedAt' in self.company_data else 'Added new'} company with ID: {self.company_id}")
-
-            self.company_data.update(data)  # Update local data
+            self.company_data.update(data)
             self.set_edit_mode(False)
-            self.update_ui_with_data()  # Refresh UI with updated data
+            self.update_ui_with_data()
             self.companyUpdated.emit(self.company_id)
             QMessageBox.information(self, "Success", "Company data saved successfully!")
         except Exception as e:
