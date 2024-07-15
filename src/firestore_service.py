@@ -96,27 +96,46 @@ class FirestoreService:
         logging.debug(f"Update data: {data}")
         try:
             doc_ref = self.db.collection(collection).document(company_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                # Convert boolean values to strings
-                updated_data = {}
-                for key, value in data.items():
-                    if isinstance(value, bool):
-                        updated_data[key] = "Van" if value else "Nincs"
-                    elif value is None:
-                        updated_data[key] = DELETE_FIELD
-                    else:
-                        updated_data[key] = value
 
-                doc_ref.set(updated_data, merge=True)
-                logging.info(f"Successfully updated company with ID: {company_id}")
-                return True
-            else:
-                logging.warning(f"No document found with ID: {company_id} in collection: {collection}")
-                return False
+            # Remove Id and LastModified from the update data
+            data.pop('Id', None)
+            data.pop('LastModified', None)
+
+            # Update the document
+            doc_ref.update(self.prepare_data_for_save(data))
+
+            logging.info(f"Successfully updated company with ID: {company_id}")
+            return True
         except Exception as e:
-            logging.error(f"Error updating company: {e}", exc_info=True)
+            logging.error(f"Error updating company: {e}")
             raise
+
+    def prepare_data_for_save(self, data):
+        updated_data = {}
+        for key, value in data.items():
+            if key in ['Id', 'LastModified']:
+                updated_data[key] = value  # Keep these fields but don't modify them
+            elif key == 'quantity':
+                if value == "":
+                    updated_data[key] = None
+                elif value is not None:
+                    try:
+                        updated_data[key] = int(value)
+                    except ValueError:
+                        updated_data[key] = None  # If conversion fails, set to None
+                else:
+                    updated_data[key] = None
+            elif isinstance(value, bool):
+                updated_data[key] = value
+            elif value == "Van":
+                updated_data[key] = True
+            elif value == "Nincs":
+                updated_data[key] = False
+            elif value is None:
+                updated_data[key] = ""  # Convert None to empty string
+            else:
+                updated_data[key] = value
+        return updated_data
 
     def delete_company(self, collection, company_id):
         logging.info(f"Deleting company - Collection: {collection}, ID: {company_id}")

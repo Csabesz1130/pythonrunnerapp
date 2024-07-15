@@ -351,18 +351,18 @@ class MainWindow(QMainWindow):
     def add_company(self):
         try:
             collection = self.get_current_collection()
-            new_id = self.firestore_service.generate_id()
-            # Create an empty company data dictionary
+            # Create a new company data dictionary with blank Id and LastModified
             new_company_data = {
-                "Id": new_id,
+                "Id": "",  # Blank Id field
                 "CompanyName": "",
                 "ProgramName": "",
+                "LastModified": "",  # Blank LastModified field
                 # Add other fields with default values as needed
             }
             if collection == "Company_Install":
-                details_view = CompanyDetailsViewInstall(self.firestore_service, new_id, self, new_company_data)
+                details_view = CompanyDetailsViewInstall(self.firestore_service, None, self, new_company_data)
             else:
-                details_view = CompanyDetailsViewDemolition(self.firestore_service, new_id, self, new_company_data)
+                details_view = CompanyDetailsViewDemolition(self.firestore_service, None, self, new_company_data)
             details_view.companyUpdated.connect(self.load_companies)
             details_view.show()
         except Exception as e:

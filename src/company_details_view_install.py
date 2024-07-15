@@ -11,16 +11,13 @@ class CompanyDetailsViewInstall(QDialog):
         self.firestore_service = firestore_service
         self.company_id = company_id
         self.company_data = company_data or {}
+        self.is_new_company = not company_id
         logging.debug(f"Initializing CompanyDetailsViewInstall with company_id: {company_id}, company_data: {self.company_data}")
-        self.setWindowTitle("Company Details - Install")
         self.setup_ui()
         self.populate_festivals()
-        if company_data:
+        if not self.is_new_company:
             self.update_ui_with_data()
-            self.set_edit_mode(True)  # Always start in edit mode for existing companies
-        else:
-            self.initialize_new_company()
-            self.set_edit_mode(True)  # New companies start in edit mode
+        self.set_edit_mode(True)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
