@@ -190,22 +190,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
 
     def on_header_clicked(self, logical_index):
-        header = self.get_headers_for_collection(self.get_current_collection())[logical_index]
-        if header in ["Igény", "Kiadott"]:
-            if self.current_sort_column == logical_index:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
-            else:
-                self.current_sort_order = Qt.SortOrder.AscendingOrder
-            self.current_sort_column = logical_index
-            self.sort_table(logical_index)
+        if self.current_sort_column == logical_index:
+            self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
         else:
-            # For other columns, use the default sorting
-            if self.current_sort_column == logical_index:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
-            else:
-                self.current_sort_column = logical_index
-                self.current_sort_order = Qt.SortOrder.AscendingOrder
-            self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+            self.current_sort_order = Qt.SortOrder.AscendingOrder
+        self.current_sort_column = logical_index
+        self.sort_table(logical_index)
 
     def filter_companies(self):
         search_text = self.search_input.text().lower()
@@ -526,30 +516,26 @@ class MainWindow(QMainWindow):
         def get_key(row):
             item = self.company_table.item(row, column)
             if item is None:
-                return ""
+                return -float('inf')  # Place empty cells at the beginning
             value = item.text().strip()
             if header in ["Igény", "Kiadott"]:
                 try:
                     return int(value)
                 except ValueError:
-                    try:
-                        return float(value)
-                    except ValueError:
-                        return float('-inf')  # Place non-numeric values at the beginning
+                    return -float('inf')  # Place non-numeric values at the beginning
             return value
 
         row_count = self.company_table.rowCount()
         rows = list(range(row_count))
         sorted_rows = sorted(rows, key=get_key, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
 
-        for i, row in enumerate(sorted_rows):
-            if i != row:
-                # Swap rows
+        # Perform the row swapping
+        for i, source_row in enumerate(sorted_rows):
+            if i != source_row:
+                self.company_table.insertRow(i)
                 for col in range(self.company_table.columnCount()):
-                    self.company_table.insertRow(i)
-                    for j in range(self.company_table.columnCount()):
-                        self.company_table.setItem(i, j, self.company_table.takeItem(row + 1, j))
-                    self.company_table.removeRow(row + 1)
+                    self.company_table.setItem(i, col, self.company_table.takeItem(source_row + 1, col))
+                self.company_table.removeRow(source_row + 1)
 
         self.current_sort_column = column
         self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
@@ -557,8 +543,16 @@ class MainWindow(QMainWindow):
         self.company_table.setSortingEnabled(True)
         self.company_table.horizontalHeader().setSortIndicator(column, self.current_sort_order)
 
+
     def on_header_clicked(self, logical_index):
+        logging.debug(f"Header clicked: column {logical_index}")
+        if self.current_sort_column == logical_index:
+            self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+        else:
+            self.current_sort_order = Qt.SortOrder.AscendingOrder
+        self.current_sort_column = logical_index
         self.sort_table(logical_index)
+        logging.debug(f"Sorting completed for column {logical_index}, order: {self.current_sort_order}")
 
 
 if __name__ == "__main__":
