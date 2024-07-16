@@ -2,6 +2,7 @@ import csv
 import logging
 import os
 import sys
+from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
@@ -112,6 +113,23 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.bulk_edit_button)
 
         self.main_layout.addLayout(button_layout)
+
+    def on_festival_changed(self, index):
+        if index > 0:  # Assuming the first item is a placeholder like "Select a festival"
+            self.set_buttons_enabled(True)
+            self.load_companies()
+        else:
+            self.set_buttons_enabled(False)
+            self.company_table.setRowCount(0)  # Clear the table
+
+    def set_buttons_enabled(self, enabled):
+        self.add_company_button.setEnabled(enabled)
+        self.export_button.setEnabled(enabled)
+        self.refresh_button.setEnabled(enabled)
+        self.bulk_edit_button.setEnabled(enabled)
+        self.search_input.setEnabled(enabled)
+        for filter_input in self.filter_inputs:
+            filter_input.setEnabled(enabled)
 
     def on_search_text_changed(self):
         # Reset the timer every time the text changes
@@ -262,7 +280,9 @@ class MainWindow(QMainWindow):
             return str(company.get('sn_count', 0))
         elif header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
             return "Van" if value else "Nincs"
-        elif header == "Last Modified":
+        elif header in ["Last Modified", "LastAdded"]:
+            if isinstance(value, datetime):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
             return str(value) if value else ""
         else:
             return str(value)
@@ -322,7 +342,9 @@ class MainWindow(QMainWindow):
             specific_headers = ["Igény", "Kiadott", "Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
         else:  # Company_Demolition
             specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
-        return common_headers + specific_headers + ["Last Modified"]
+
+        # Add the new "LastAdded" field
+        return common_headers + ["LastAdded"] + specific_headers + ["Last Modified"]
 
     def update_filter_inputs(self):
         # Clear existing filter inputs
@@ -467,6 +489,7 @@ class MainWindow(QMainWindow):
             "Id": "ID",
             "CompanyName": "Name",
             "ProgramName": "Program",
+            "LastAdded": "LastAdded",
             "LastModified": "Last Modified"
         }
 

@@ -39,6 +39,7 @@ class FirestoreService:
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
 
             companies = companies_ref.get()
+            logging.info(f"Retrieved {len(companies)} company documents from Firestore")
 
             if not companies:
                 logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
@@ -46,17 +47,26 @@ class FirestoreService:
 
             result = []
             for company in companies:
-                company_data = company.to_dict()
-                company_data['firestore_id'] = company.id
+                try:
+                    company_data = company.to_dict()
+                    if not isinstance(company_data, dict):
+                        logging.warning(f"Unexpected data type for company {company.id}: {type(company_data)}")
+                        continue
 
-                # Get the count of items in the SN subcollection
-                sn_count = self.get_sn_count(collection, company.id)
-                company_data['sn_count'] = sn_count
+                    company_data['firestore_id'] = company.id
 
-                result.append(company_data)
-                logging.debug(f"Fetched company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
+                    # Get the count of items in the SN subcollection
+                    sn_count = self.get_sn_count(collection, company.id)
+                    company_data['sn_count'] = sn_count
 
-            logging.info(f"Successfully fetched {len(result)} companies")
+                    result.append(company_data)
+                    logging.debug(f"Processed company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
+                except Exception as e:
+                    logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
+                    # Skip this company and continue with the next one
+                    continue
+
+            logging.info(f"Successfully processed {len(result)} companies")
             return result
         except Exception as e:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
@@ -121,6 +131,7 @@ class FirestoreService:
             new_doc_ref = self.db.collection(collection).document()
             sn_list = data.pop('SN', [])  # Remove SN from main data
             data['LastModified'] = self.server_timestamp()
+            data['LastAdded'] = self.server_timestamp()  # Set LastAdded when creating a new company
             data['CreatedAt'] = self.server_timestamp()
             new_doc_ref.set(data)
 
@@ -144,6 +155,11 @@ class FirestoreService:
             doc_ref = docs[0].reference
             sn_list = data.pop('SN', None)  # Remove SN from main data
             data['LastModified'] = self.server_timestamp()
+
+            # Preserve LastAdded if it exists, otherwise set it
+            if 'LastAdded' not in doc_ref.get().to_dict():
+                data['LastAdded'] = self.server_timestamp()
+
             doc_ref.update(self.prepare_data_for_save(data))
 
             # Update SN list if provided
