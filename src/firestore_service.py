@@ -1,227 +1,111 @@
-import time
-import firebase_admin
-from firebase_admin import credentials, firestore
 import os
+from google.cloud import firestore
+import time
 import logging
-from google.cloud.exceptions import NotFound
-from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
 class FirestoreService:
     def __init__(self, credentials_path=None):
-        if credentials_path is None:
-            credentials_path = r"C:\Users\Balogh Csaba\pythonrunnerapp\resources\runnerapp-232cc-firebase-adminsdk-2csiq-331f965683.json"
-
-        if not os.path.exists(credentials_path):
-            logging.error(f"Firebase credentials file not found at: {credentials_path}")
-            raise FileNotFoundError(f"Firebase credentials file not found at: {credentials_path}")
-
-        cred = credentials.Certificate(credentials_path)
-        firebase_admin.initialize_app(cred)
-        self.db = firestore.client()
-        logging.info("FirestoreService initialized successfully")
-
-    def get_festivals(self):
-        logging.info("Fetching festivals")
         try:
-            festivals = self.db.collection('Programs').get()
-            result = [festival.to_dict().get('ProgramName', 'Unknown Festival') for festival in festivals]
-            logging.info(f"Successfully fetched {len(result)} festivals")
-            return result
+            if credentials_path:
+                self.db = firestore.Client.from_service_account_json(credentials_path)
+            else:
+                # If no path is provided, try to use the environment variable
+                self.db = firestore.Client()
+            logging.info("Firestore client initialized successfully.")
         except Exception as e:
-            logging.error(f"Error fetching festivals: {e}", exc_info=True)
-            return []
+            logging.error(f"Failed to initialize Firestore client: {e}")
+            raise ValueError(f"Failed to initialize Firestore client. Error: {str(e)}")
 
-    def get_companies(self, collection, festival=None):
-        logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
+    def get_all_documents(self, collection):
         try:
-            companies_ref = self.db.collection(collection)
-            if festival and festival != "All Festivals":
-                companies_ref = companies_ref.where('ProgramName', '==', festival)
-
-            companies = companies_ref.get()
-            logging.info(f"Retrieved {len(companies)} company documents from Firestore")
-
-            if not companies:
-                logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
-                return []
-
-            result = []
-            for company in companies:
-                try:
-                    company_data = company.to_dict()
-                    if not isinstance(company_data, dict):
-                        logging.warning(f"Unexpected data type for company {company.id}: {type(company_data)}")
-                        continue
-
-                    company_data['firestore_id'] = company.id
-
-                    # Get the count of items in the SN subcollection
-                    sn_count = self.get_sn_count(collection, company.id)
-                    company_data['sn_count'] = sn_count
-
-                    result.append(company_data)
-                    logging.debug(f"Processed company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
-                except Exception as e:
-                    logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
-                    # Skip this company and continue with the next one
-                    continue
-
-            logging.info(f"Successfully processed {len(result)} companies")
-            return result
+            docs = self.db.collection(collection).get()
+            return [doc.to_dict() for doc in docs]
         except Exception as e:
-            logging.error(f"Error fetching companies: {e}", exc_info=True)
-            return []
-
-    def get_sn_count(self, collection, company_id):
-        try:
-            sn_collection = self.db.collection(collection).document(company_id).collection('SN')
-            return len(sn_collection.get())
-        except Exception as e:
-            logging.error(f"Error getting SN count for company {company_id}: {e}")
-            return 0
+            logging.error(f"Error fetching documents from {collection}: {e}")
+            raise
 
     def get_company(self, collection, company_id):
-        logging.info(f"Fetching company details - Collection: {collection}, ID: {company_id}")
         try:
-            # First, try to get the document directly by its Firestore ID
-            doc_ref = self.db.collection(collection).document(company_id)
-            doc = doc_ref.get()
-
-            if doc.exists:
-                company_data = doc.to_dict()
-                company_data['firestore_id'] = doc.id
-                logging.info(f"Successfully fetched company data for Firestore ID: {company_id}")
-                return company_data
-            else:
-                # If not found, try querying by the 'Id' field
-                query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
-                docs = query.get()
-
-                if docs:
-                    company_data = docs[0].to_dict()
-                    company_data['firestore_id'] = docs[0].id
-                    logging.info(f"Successfully fetched company data for ID: {company_id}")
-                    return company_data
-                else:
-                    logging.warning(f"No company found with ID: {company_id} in collection: {collection}")
-                    return None
+            doc = self.db.collection(collection).document(company_id).get()
+            return doc.to_dict() if doc.exists else None
         except Exception as e:
-            logging.error(f"Error fetching company details: {e}", exc_info=True)
-            return None
-
-    def generate_id(self):
-        new_id = str(int(time.time() * 1000))
-        logging.info(f"Generated new ID: {new_id}")
-        return new_id
-
-    def get_sn_list(self, company_id):
-        logging.info(f"Fetching SN list for company ID: {company_id}")
-        try:
-            sn_collection = self.db.collection("Company_Install").document(company_id).collection('SN')
-            sn_docs = sn_collection.get()
-            sn_list = [doc.to_dict()['SN'] for doc in sn_docs if 'SN' in doc.to_dict()]
-            logging.info(f"Fetched {len(sn_list)} SN entries for company {company_id}")
-            return sn_list
-        except Exception as e:
-            logging.error(f"Error fetching SN list for company {company_id}: {e}", exc_info=True)
-            return []
+            logging.error(f"Error fetching company {company_id} from {collection}: {e}")
+            raise
 
     def add_company(self, collection, data):
         try:
-            new_doc_ref = self.db.collection(collection).document()
-            sn_list = data.pop('SN', [])  # Remove SN from main data
-            data['LastModified'] = self.server_timestamp()
-            data['LastAdded'] = self.server_timestamp()  # Set LastAdded when creating a new company
-            data['CreatedAt'] = self.server_timestamp()
-            new_doc_ref.set(data)
-
-            # Add SN documents to subcollection
-            for sn in sn_list:
-                new_doc_ref.collection('SN').add({'SN': sn})
-
-            return new_doc_ref.id
+            doc_ref = self.db.collection(collection).document()
+            doc_ref.set(data)
+            return doc_ref.id
         except Exception as e:
-            logging.error(f"Error adding company: {e}")
+            logging.error(f"Error adding company to {collection}: {e}")
+            raise
+
+    def get_all_documents(self, collection):
+        try:
+            docs = self.db.collection(collection).get()
+            return [{
+                **doc.to_dict(),
+                'Id': doc.id,
+                'CreatedAt': doc.create_time.strftime("%Y-%m-%d %H:%M:%S") if doc.create_time else None,
+                # Ensure boolean fields are properly retrieved
+                'Elosztó': doc.get('Elosztó', False),
+                '3': doc.get('3', False),  # Assuming '3' is the Elosztó field
+                '4': doc.get('4', False),  # Áram
+                '5': doc.get('5', False),  # Hálózat
+                '6': doc.get('6', False),  # PTG
+                '7': doc.get('7', False),  # Szoftver
+                '8': doc.get('8', False),  # Param
+                '9': doc.get('9', False),  # Helyszín
+            } for doc in docs]
+        except Exception as e:
+            logging.error(f"Error fetching documents from {collection}: {e}")
             raise
 
     def update_company(self, collection, company_id, data):
         try:
-            query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
-            docs = query.get()
-
-            if not docs:
-                raise ValueError(f"No company found with ID: {company_id}")
-
-            doc_ref = docs[0].reference
-            sn_list = data.pop('SN', None)  # Remove SN from main data
-            data['LastModified'] = self.server_timestamp()
-
-            # Preserve LastAdded if it exists, otherwise set it
-            if 'LastAdded' not in doc_ref.get().to_dict():
-                data['LastAdded'] = self.server_timestamp()
-
-            doc_ref.update(self.prepare_data_for_save(data))
-
-            # Update SN list if provided
-            if sn_list is not None:
-                self.update_sn_list(company_id, sn_list)
-
+            doc_ref = self.db.collection(collection).document(company_id)
+            doc_ref.update(data)
             return True
         except Exception as e:
-            logging.error(f"Error updating company: {e}")
+            logging.error(f"Error updating company {company_id} in {collection}: {e}")
             raise
-
-    def prepare_data_for_save(self, data):
-        updated_data = {}
-        for key, value in data.items():
-            if key in ['Id', 'LastModified']:
-                updated_data[key] = value  # Keep these fields but don't modify them
-            elif key == 'quantity':
-                if value == "":
-                    updated_data[key] = None
-                elif value is not None:
-                    try:
-                        updated_data[key] = int(value)
-                    except ValueError:
-                        updated_data[key] = None  # If conversion fails, set to None
-                else:
-                    updated_data[key] = None
-            elif isinstance(value, bool):
-                updated_data[key] = value
-            elif value == "Van":
-                updated_data[key] = True
-            elif value == "Nincs":
-                updated_data[key] = False
-            elif value is None:
-                updated_data[key] = ""  # Convert None to empty string
-            else:
-                updated_data[key] = value
-        return updated_data
 
     def delete_company(self, collection, company_id):
-        logging.info(f"Deleting company - Collection: {collection}, ID: {company_id}")
         try:
             self.db.collection(collection).document(company_id).delete()
-            logging.info(f"Successfully deleted company with ID: {company_id}")
         except Exception as e:
-            logging.error(f"Error deleting company: {e}", exc_info=True)
+            logging.error(f"Error deleting company {company_id} from {collection}: {e}")
             raise
 
-    def add_comment(self, collection, company_id, comment_data):
-        logging.info(f"Adding comment - Collection: {collection}, ID: {company_id}")
-        logging.debug(f"Comment data: {comment_data}")
+    def generate_id(self):
+        return str(int(time.time() * 1000))
+
+    def get_sn_list(self, company_id):
         try:
-            company_ref = self.db.collection(collection).document(company_id)
-            company_ref.update({
-                "comments": firestore.ArrayUnion([comment_data])
-            })
-            logging.info(f"Successfully added comment to company with ID: {company_id}")
+            sn_collection = self.db.collection("Company_Install").document(company_id).collection('SN')
+            sn_docs = sn_collection.get()
+            return [doc.to_dict()['SN'] for doc in sn_docs if 'SN' in doc.to_dict()]
         except Exception as e:
-            logging.error(f"Error adding comment: {e}", exc_info=True)
+            logging.error(f"Error fetching SN list for company {company_id}: {e}")
             raise
 
-    def server_timestamp(self):
-        return firestore.SERVER_TIMESTAMP
+    def update_sn_list(self, company_id, sn_list):
+        try:
+            sn_collection = self.db.collection("Company_Install").document(company_id).collection('SN')
+            batch = self.db.batch()
 
-    def check_id_exists(self, collection, param):
-        pass
+            # Delete existing SN documents
+            existing_docs = sn_collection.get()
+            for doc in existing_docs:
+                batch.delete(doc.reference)
+
+            # Add new SN documents
+            for sn in sn_list:
+                new_doc_ref = sn_collection.document()
+                batch.set(new_doc_ref, {'SN': sn})
+
+            batch.commit()
+        except Exception as e:
+            logging.error(f"Error updating SN list for company {company_id}: {e}")
+            raise
