@@ -16,8 +16,9 @@ class DynamicFirestoreModel(QAbstractTableModel):
     def update_single_item(self, item):
         item_id = item.get('Id')
         if not item_id:
-            logging.warning(f"Received item without ID: {item}")
-            return
+            logging.warning(f"Received item without ID, generating a temporary one: {item}")
+            item_id = f"temp_{len(self._data)}"
+            item['Id'] = item_id
 
         for row, existing_item in enumerate(self._data):
             if existing_item.get('Id') == item_id:
@@ -61,7 +62,6 @@ class DynamicFirestoreModel(QAbstractTableModel):
 
             # Handle CreatedAt (assuming it's a timestamp or string)
             if key == "CreatedAt" and value:
-                # You might need to adjust this depending on the exact format of CreatedAt
                 return str(value)[:10]  # Display only the date part
 
             # Handle Elosztó and other boolean fields

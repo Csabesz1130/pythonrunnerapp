@@ -48,15 +48,14 @@ class FirestoreService:
                 **doc.to_dict(),
                 'Id': doc.id,
                 'CreatedAt': doc.create_time.strftime("%Y-%m-%d %H:%M:%S") if doc.create_time else None,
-                # Ensure boolean fields are properly retrieved
-                'Elosztó': doc.get('Elosztó', False),
-                '3': doc.get('3', False),  # Assuming '3' is the Elosztó field
-                '4': doc.get('4', False),  # Áram
-                '5': doc.get('5', False),  # Hálózat
-                '6': doc.get('6', False),  # PTG
-                '7': doc.get('7', False),  # Szoftver
-                '8': doc.get('8', False),  # Param
-                '9': doc.get('9', False),  # Helyszín
+                'Elosztó': doc.to_dict().get('Elosztó', False),
+                '3': doc.to_dict().get('3', False),
+                '4': doc.to_dict().get('4', False),
+                '5': doc.to_dict().get('5', False),
+                '6': doc.to_dict().get('6', False),
+                '7': doc.to_dict().get('7', False),
+                '8': doc.to_dict().get('8', False),
+                '9': doc.to_dict().get('9', False),
             } for doc in docs]
         except Exception as e:
             logging.error(f"Error fetching documents from {collection}: {e}")

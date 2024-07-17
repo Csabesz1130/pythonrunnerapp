@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, QMessageBox, QApplication
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread
 from pythonrunnerapp.src.dynamic_firestore_model import DynamicFirestoreModel
 from pythonrunnerapp.src.dynamic_filter_proxy_model import DynamicFilterProxyModel
 #from src.firestore_listener import FirestoreListener
@@ -108,8 +108,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def on_search_changed(self, text):
         logging.debug(f"Search text changed: {text}")
-        for column in range(self.source_model.columnCount(None)):
-            self.proxy_model.setFilter(column, text)
+        self.proxy_model.setFilterFixedString(text)
 
     def open_company_details(self, index):
         try:
@@ -205,8 +204,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         logging.debug("Closing main window")
         try:
-            self.listener.stop_listening()
-            self.update_timer.stop()
+            if hasattr(self, 'listener') and self.listener:
+                self.listener.stop_listening()
+            if hasattr(self, 'update_timer') and self.update_timer:
+                self.update_timer.stop()
+            # Wait for background threads to finish
+            QApplication.processEvents()
+            QThread.msleep(500)  # Wait for 500ms
         except Exception as e:
             logging.error(f"Error during application shutdown: {e}", exc_info=True)
         super().closeEvent(event)
