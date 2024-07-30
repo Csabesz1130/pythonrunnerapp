@@ -15,6 +15,7 @@ from src.edit_field_dialog import EditFieldDialog
 from src.firestore_service import FirestoreService
 from src.excel_exporter import ExcelExporter
 from src.table_filter import FilterableTableView
+from src.site_processor import SiteProcessor
 from src.excel_exporter import ExcelExporter  # Make sure to import this
 
 
@@ -28,108 +29,145 @@ class MainWindow(QMainWindow):
         self.current_sort_column = -1
         self.current_sort_order = Qt.SortOrder.AscendingOrder
 
-        self.search_timer = QTimer(self)
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.filter_companies)
+        try:
+            logging.info("Initializing SiteProcessor")
+            self.site_processor = SiteProcessor(firestore_service, self)
+            self.site_processor.processing_complete.connect(self.load_companies)
 
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)
+            logging.info("Setting up search timer")
+            self.search_timer = QTimer(self)
+            self.search_timer.setSingleShot(True)
+            self.search_timer.timeout.connect(self.filter_companies)
 
-        self.setup_ui()
-        self.populate_festivals()
-        self.load_companies()
+            logging.info("Setting up central widget")
+            self.central_widget = QWidget()
+            self.setCentralWidget(self.central_widget)
+            self.main_layout = QVBoxLayout(self.central_widget)
+
+            logging.info("Setting up UI")
+            self.setup_ui()
+
+            logging.info("Populating festivals")
+            self.populate_festivals()
+
+            logging.info("MainWindow initialization completed successfully")
+        except Exception as e:
+            logging.error(f"Error during MainWindow initialization: {e}", exc_info=True)
+            QMessageBox.critical(self, "Initialization Error", f"An error occurred during initialization: {str(e)}")
 
     def setup_ui(self):
         # Top layout
-        top_layout = QHBoxLayout()
+        logging.info("Starting UI setup")
+        try:
+            top_layout = QHBoxLayout()
 
-        # Festival combo box
-        self.festival_combo = QComboBox()
-        self.festival_combo.currentIndexChanged.connect(self.load_companies)
-        top_layout.addWidget(self.festival_combo)
+            # Festival combo box
+            self.festival_combo = QComboBox()
+            self.festival_combo.currentIndexChanged.connect(self.on_festival_changed)
+            top_layout.addWidget(self.festival_combo)
 
-        # Radio buttons for collection selection
-        self.collection_group = QButtonGroup(self)
-        self.install_radio = QRadioButton("Company_Install")
-        self.demolition_radio = QRadioButton("Company_Demolition")
-        self.install_radio.setChecked(True)
-        self.collection_group.addButton(self.install_radio)
-        self.collection_group.addButton(self.demolition_radio)
-        top_layout.addWidget(self.install_radio)
-        top_layout.addWidget(self.demolition_radio)
+            # Radio buttons for collection selection
+            self.collection_group = QButtonGroup(self)
+            self.install_radio = QRadioButton("Company_Install")
+            self.demolition_radio = QRadioButton("Company_Demolition")
+            self.install_radio.setChecked(True)
+            self.collection_group.addButton(self.install_radio)
+            self.collection_group.addButton(self.demolition_radio)
+            top_layout.addWidget(self.install_radio)
+            top_layout.addWidget(self.demolition_radio)
 
-        # Connect radio buttons to on_collection_changed
-        self.install_radio.toggled.connect(self.on_collection_changed)
-        self.demolition_radio.toggled.connect(self.on_collection_changed)
+            self.install_radio.toggled.connect(self.on_collection_changed)
+            self.demolition_radio.toggled.connect(self.on_collection_changed)
 
-        self.main_layout.addLayout(top_layout)
+            self.main_layout.addLayout(top_layout)
 
-        # General search input
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search companies...")
-        self.search_input.textChanged.connect(self.on_search_text_changed)
-        self.main_layout.addWidget(self.search_input)
+            # General search input
+            self.search_input = QLineEdit()
+            self.search_input.setPlaceholderText("Search companies...")
+            self.search_input.textChanged.connect(self.on_search_text_changed)
+            self.main_layout.addWidget(self.search_input)
 
-        # Filter inputs layout
-        self.filter_layout = QHBoxLayout()
-        self.main_layout.addLayout(self.filter_layout)
+            # Filter inputs layout
+            self.filter_layout = QHBoxLayout()
+            self.main_layout.addLayout(self.filter_layout)
 
-        # Initialize filter inputs
-        self.filter_inputs = []
-        self.update_filter_inputs()
+            # Initialize filter inputs
+            self.filter_inputs = []
+            self.update_filter_inputs()
 
-        # Company table
-        self.company_table = QTableWidget()
-        self.company_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.company_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        self.company_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.company_table.doubleClicked.connect(self.open_company_details)
-        self.company_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
-        self.main_layout.addWidget(self.company_table)
+            # Company table
+            self.company_table = QTableWidget()
+            self.company_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.company_table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+            self.company_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.company_table.doubleClicked.connect(self.open_company_details)
+            self.company_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
+            self.main_layout.addWidget(self.company_table)
 
-        # Select all checkbox
-        self.select_all_checkbox = QCheckBox("Select All")
-        self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
-        self.main_layout.addWidget(self.select_all_checkbox)
+            # Select all checkbox
+            self.select_all_checkbox = QCheckBox("Select All")
+            self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
+            self.main_layout.addWidget(self.select_all_checkbox)
 
-        # Button layout
-        button_layout = QHBoxLayout()
+            # Button layout
+            logging.info("Setting up button layout")
+            button_layout = QHBoxLayout()
 
-        self.add_company_button = QPushButton("Add Company")
-        self.add_company_button.clicked.connect(self.add_company)
-        button_layout.addWidget(self.add_company_button)
+            logging.info("Setting up export button")
+            self.export_button = QPushButton("Export to Excel")
+            self.export_button.clicked.connect(self.export_to_excel)
+            button_layout.addWidget(self.export_button)
 
-        self.export_button = QPushButton("Export to Excel")
-        self.export_button.clicked.connect(self.export_to_excel)
-        button_layout.addWidget(self.export_button)
+            logging.info("Setting up import sites button")
+            self.import_sites_button = QPushButton("Import Sites")
+            self.import_sites_button.clicked.connect(self.site_processor.import_sites)
+            button_layout.addWidget(self.import_sites_button)
 
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self.load_companies)
-        button_layout.addWidget(self.refresh_button)
+            logging.info("Setting up refresh button")
+            self.refresh_button = QPushButton("Refresh")
+            self.refresh_button.clicked.connect(self.load_companies)
+            button_layout.addWidget(self.refresh_button)
 
-        self.bulk_edit_button = QPushButton("Bulk Edit")
-        self.bulk_edit_button.clicked.connect(self.bulk_edit)
-        button_layout.addWidget(self.bulk_edit_button)
+            logging.info("Setting up bulk edit button")
+            self.bulk_edit_button = QPushButton("Bulk Edit")
+            self.bulk_edit_button.clicked.connect(self.bulk_edit)
+            button_layout.addWidget(self.bulk_edit_button)
 
-        self.main_layout.addLayout(button_layout)
+            self.main_layout.addLayout(button_layout)
+        except Exception as e:
+            logging.error(f"Error in setup_ui: {e}", exc_info=True)
+            raise
 
     def on_festival_changed(self, index):
-        if index > 0:  # Assuming the first item is a placeholder like "Select a festival"
-            self.set_buttons_enabled(True)
-            self.load_companies()
-        else:
-            self.set_buttons_enabled(False)
-            self.company_table.setRowCount(0)  # Clear the table
+        logging.info(f"Festival changed. New index: {index}")
+        try:
+            if index > 0:  # 0 is the "Select a festival" placeholder
+                logging.info("Valid festival selected. Enabling buttons and loading companies.")
+                self.set_buttons_enabled(True)
+                self.load_companies()
+            else:
+                logging.info("No festival selected. Disabling buttons and clearing table.")
+                self.set_buttons_enabled(False)
+                self.company_table.setRowCount(0)  # Clear the table
+            logging.info("Festival change handled successfully")
+        except Exception as e:
+            logging.error(f"Error in on_festival_changed: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An error occurred while changing festivals: {str(e)}")
 
     def set_buttons_enabled(self, enabled):
-        self.add_company_button.setEnabled(enabled)
-        self.export_button.setEnabled(enabled)
-        self.refresh_button.setEnabled(enabled)
-        self.bulk_edit_button.setEnabled(enabled)
-        self.search_input.setEnabled(enabled)
-        for filter_input in self.filter_inputs:
-            filter_input.setEnabled(enabled)
+        logging.info(f"Setting buttons enabled: {enabled}")
+        try:
+            self.export_button.setEnabled(enabled)
+            self.refresh_button.setEnabled(enabled)
+            self.bulk_edit_button.setEnabled(enabled)
+            self.import_sites_button.setEnabled(enabled)
+            self.search_input.setEnabled(enabled)
+            for filter_input in self.filter_inputs:
+                filter_input.setEnabled(enabled)
+            logging.info("Buttons enabled/disabled successfully")
+        except Exception as e:
+            logging.error(f"Error setting buttons enabled: {e}", exc_info=True)
+            raise
 
     def on_search_text_changed(self):
         # Reset the timer every time the text changes
@@ -182,30 +220,44 @@ class MainWindow(QMainWindow):
             self.company_table.clearSelection()
 
     def populate_festivals(self):
+        logging.info("Starting festival population")
         try:
             festivals = self.firestore_service.get_festivals()
-            self.festival_combo.addItems(["All Festivals"] + festivals)
+            logging.info(f"Fetched {len(festivals)} festivals")
+
+            logging.info("Clearing festival combo box")
+            self.festival_combo.clear()
+
+            logging.info("Adding 'Select a festival' item")
+            self.festival_combo.addItem("Select a festival")
+
+            logging.info("Adding festivals to combo box")
+            for festival in festivals:
+                logging.debug(f"Adding festival: {festival}")
+                self.festival_combo.addItem(str(festival))
+
+            logging.info("Setting current index to 0")
+            self.festival_combo.setCurrentIndex(0)
+
+            logging.info("Disabling buttons")
+            try:
+                self.set_buttons_enabled(False)
+            except AttributeError as e:
+                logging.warning(f"Some buttons may not be initialized yet: {e}")
+
+            logging.info("Festivals populated successfully")
         except Exception as e:
-            logging.error(f"Error populating festivals: {e}")
+            logging.error(f"Error populating festivals: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load festivals: {str(e)}")
 
+
     def on_header_clicked(self, logical_index):
-        header = self.get_headers_for_collection(self.get_current_collection())[logical_index]
-        if header in ["Igény", "Kiadott"]:
-            if self.current_sort_column == logical_index:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
-            else:
-                self.current_sort_order = Qt.SortOrder.AscendingOrder
-            self.current_sort_column = logical_index
-            self.sort_table(logical_index)
+        if self.current_sort_column == logical_index:
+            self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
         else:
-            # For other columns, use the default sorting
-            if self.current_sort_column == logical_index:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
-            else:
-                self.current_sort_column = logical_index
-                self.current_sort_order = Qt.SortOrder.AscendingOrder
-            self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+            self.current_sort_order = Qt.SortOrder.AscendingOrder
+        self.current_sort_column = logical_index
+        self.sort_table(logical_index)
 
     def filter_companies(self):
         search_text = self.search_input.text().lower()
@@ -222,9 +274,12 @@ class MainWindow(QMainWindow):
         try:
             collection = self.get_current_collection()
             festival = self.festival_combo.currentText()
-            if festival == "All Festivals":
-                festival = None
 
+            if festival == "Select a festival":
+                self.company_table.setRowCount(0)
+                return
+
+            logging.info(f"Loading companies for collection: {collection}, festival: {festival}")
             companies = self.firestore_service.get_companies(collection, festival)
 
             self.company_table.setSortingEnabled(False)
@@ -232,12 +287,12 @@ class MainWindow(QMainWindow):
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
             self.company_table.setHorizontalHeaderLabels(headers)
-            self.company_table.setRowCount(len(companies))
 
+            self.company_table.setRowCount(len(companies))
             for row, company in enumerate(companies):
                 for col, header in enumerate(headers):
                     if header == "ID":
-                        value = company.get('Id', '')  # Use 'Id' field, not Firestore document ID
+                        value = company.get('Id', '')
                     else:
                         value = self.get_company_value(company, header, collection)
                     item = QTableWidgetItem(str(value))
@@ -251,7 +306,6 @@ class MainWindow(QMainWindow):
 
             self.update_filter_inputs()
 
-            # Reapply sorting if a column was previously sorted
             if self.current_sort_column != -1:
                 if self.get_headers_for_collection(collection)[self.current_sort_column] in ["Igény", "Kiadott"]:
                     self.sort_table(self.current_sort_column)
@@ -259,9 +313,10 @@ class MainWindow(QMainWindow):
                     self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
 
             self.company_table.setSortingEnabled(True)
+            logging.info("Companies loaded successfully")
 
         except Exception as e:
-            logging.error(f"Error loading companies: {e}")
+            logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
 
     def get_current_collection(self):
@@ -526,30 +581,26 @@ class MainWindow(QMainWindow):
         def get_key(row):
             item = self.company_table.item(row, column)
             if item is None:
-                return ""
+                return -float('inf')  # Place empty cells at the beginning
             value = item.text().strip()
             if header in ["Igény", "Kiadott"]:
                 try:
                     return int(value)
                 except ValueError:
-                    try:
-                        return float(value)
-                    except ValueError:
-                        return float('-inf')  # Place non-numeric values at the beginning
+                    return -float('inf')  # Place non-numeric values at the beginning
             return value
 
         row_count = self.company_table.rowCount()
         rows = list(range(row_count))
         sorted_rows = sorted(rows, key=get_key, reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder))
 
-        for i, row in enumerate(sorted_rows):
-            if i != row:
-                # Swap rows
+        # Perform the row swapping
+        for i, source_row in enumerate(sorted_rows):
+            if i != source_row:
+                self.company_table.insertRow(i)
                 for col in range(self.company_table.columnCount()):
-                    self.company_table.insertRow(i)
-                    for j in range(self.company_table.columnCount()):
-                        self.company_table.setItem(i, j, self.company_table.takeItem(row + 1, j))
-                    self.company_table.removeRow(row + 1)
+                    self.company_table.setItem(i, col, self.company_table.takeItem(source_row + 1, col))
+                self.company_table.removeRow(source_row + 1)
 
         self.current_sort_column = column
         self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
@@ -557,8 +608,16 @@ class MainWindow(QMainWindow):
         self.company_table.setSortingEnabled(True)
         self.company_table.horizontalHeader().setSortIndicator(column, self.current_sort_order)
 
+
     def on_header_clicked(self, logical_index):
+        logging.debug(f"Header clicked: column {logical_index}")
+        if self.current_sort_column == logical_index:
+            self.current_sort_order = Qt.SortOrder.DescendingOrder if self.current_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+        else:
+            self.current_sort_order = Qt.SortOrder.AscendingOrder
+        self.current_sort_column = logical_index
         self.sort_table(logical_index)
+        logging.debug(f"Sorting completed for column {logical_index}, order: {self.current_sort_order}")
 
 
 if __name__ == "__main__":

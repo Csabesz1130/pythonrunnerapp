@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QVBoxLayout, 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from datetime import datetime
 
 class ExcelExporter:
     @staticmethod
@@ -19,15 +20,15 @@ class ExcelExporter:
 
             if collection == "Company_Install":
                 headers = [
-                    "Telephely név", "Összes terminál igény", "Kiadva", "Telepítés",
+                    "Telephely név", "Összes terminál igény", "Kiadott", "Telepítés",
                     "Áram", "Elosztó", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín",
                     "Teszt", "Véglegesítve", "Megjegyzés",
-                    "Megjegyzés ideje", "Véglegesítés ideje"
+                    "Megjegyzés ideje", "Véglegesítés ideje", "LastAdded"
                 ]
             else:  # Company_Demolition
                 headers = [
-                    "Telephely név", "Összes terminál igény", "Bontás", "Felszerelés", "Bázis Leszerelés",
-                    "Megjegyzés", "Megjegyzés ideje", "Véglegesítés ideje"
+                    "Telephely név", "Összes terminál igény", "Kiadott", "Bontás", "Felszerelés", "Bázis Leszerelés",
+                    "Megjegyzés", "Megjegyzés ideje", "Véglegesítés ideje", "LastAdded"
                 ]
 
             wb = Workbook()
@@ -43,7 +44,7 @@ class ExcelExporter:
             # Add data
             for row in range(company_table.rowCount()):
                 row_data = []
-                for col in range(1, company_table.columnCount()):
+                for col in range(company_table.columnCount()):
                     item = company_table.item(row, col)
                     value = item.text() if item else ""
                     if value.lower() in ['true', 'false', 'van', 'nincs']:
@@ -97,34 +98,37 @@ class ExcelExporter:
     def map_install_data(row_data):
         return [
             row_data[1],  # Telephely név (CompanyName)
-            row_data[3],  # Összes terminál igény (Quantity)
-            "Van" if row_data[5] == "KIADVA" else "Nincs",  # Kiadva
-            row_data[5],  # Telepítés
-            row_data[6],  # Áram
-            row_data[7],  # Elosztó
-            row_data[8],  # Hálózat
-            row_data[9],  # PTG
-            row_data[10],  # Szoftver
-            row_data[11],  # Param
-            row_data[12],  # Helyszín
-            "Van" if row_data[5] == "HELYSZINEN_TESZTELVE" else "Nincs",  # Teszt
-            "Van" if row_data[5] == "KIRAKVA" else "Nincs",  # Véglegesítve
+            row_data[4],  # Összes terminál igény (Igény)
+            row_data[5],  # Kiadott
+            row_data[7],  # Telepítés
+            row_data[8],  # Áram
+            row_data[9],  # Elosztó
+            row_data[10],  # Hálózat
+            row_data[11],  # PTG
+            row_data[12],  # Szoftver
+            row_data[13],  # Param
+            row_data[14],  # Helyszín
+            "Van" if row_data[7] == "HELYSZINEN_TESZTELVE" else "Nincs",  # Teszt
+            "Van" if row_data[7] == "KIRAKVA" else "Nincs",  # Véglegesítve
             "",  # Megjegyzés (not available)
             "",  # Megjegyzés ideje (not available)
-            row_data[-1]  # Véglegesítés ideje (LastModified)
+            row_data[-1],  # Véglegesítés ideje (LastModified)
+            row_data[3],  # LastAdded
         ]
 
     @staticmethod
     def map_demolition_data(row_data):
         return [
             row_data[1],  # Telephely név (CompanyName)
-            row_data[3],  # Összes terminál igény (Quantity)
-            row_data[5],  # Bontás
-            row_data[6],  # Felszerelés
-            "Van" if row_data[7] == "True" else "Nincs",  # Bázis Leszerelés
+            row_data[4],  # Összes terminál igény (Igény)
+            row_data[5],  # Kiadott
+            row_data[6],  # Bontás
+            row_data[7],  # Felszerelés
+            "Van" if row_data[8] == "True" else "Nincs",  # Bázis Leszerelés
             "",  # Megjegyzés (not available)
             "",  # Megjegyzés ideje (not available)
-            row_data[-1]  # Véglegesítés ideje (LastModified)
+            row_data[-1],  # Véglegesítés ideje (LastModified)
+            row_data[3],  # LastAdded
         ]
 
     @staticmethod

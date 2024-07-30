@@ -53,6 +53,10 @@ class CompanyDetailsViewInstall(QDialog):
         self.program_combo = QComboBox()
         form.addRow("Program:", self.program_combo)
 
+        self.last_added_label = QLineEdit()
+        self.last_added_label.setReadOnly(True)
+        form.addRow("Last Added:", self.last_added_label)
+
         self.quantity_edit = QLineEdit()
         self.quantity_edit.setValidator(QIntValidator(0, 999999))
         form.addRow("Igény:", self.quantity_edit)
@@ -135,6 +139,16 @@ class CompanyDetailsViewInstall(QDialog):
         elif program_name:
             self.program_combo.addItem(program_name)
             self.program_combo.setCurrentText(program_name)
+
+        last_added = self.company_data.get("LastAdded", "")
+        if last_added:
+            if isinstance(last_added, datetime):
+                last_added_str = last_added.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                last_added_str = str(last_added)
+        else:
+            last_added_str = ""
+        self.last_added_label.setText(last_added_str)
 
         # Update quantity
         quantity = self.company_data.get("quantity")

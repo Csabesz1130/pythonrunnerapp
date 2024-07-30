@@ -3,6 +3,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import os
 import logging
+
+from google.api_core import retry
 from google.cloud.exceptions import NotFound
 from google.cloud.firestore_v1.transforms import DELETE_FIELD
 
@@ -31,6 +33,7 @@ class FirestoreService:
             logging.error(f"Error fetching festivals: {e}", exc_info=True)
             return []
 
+    @retry.Retry(predicate=retry.if_exception_type(Exception))
     def get_companies(self, collection, festival=None):
         logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
         try:
@@ -38,8 +41,7 @@ class FirestoreService:
             if festival and festival != "All Festivals":
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
 
-            companies = companies_ref.get()
-            logging.info(f"Retrieved {len(companies)} company documents from Firestore")
+            companies = list(companies_ref.get())  # Materialize the query results
 
             if not companies:
                 logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
@@ -49,28 +51,20 @@ class FirestoreService:
             for company in companies:
                 try:
                     company_data = company.to_dict()
-                    if not isinstance(company_data, dict):
-                        logging.warning(f"Unexpected data type for company {company.id}: {type(company_data)}")
-                        continue
-
                     company_data['firestore_id'] = company.id
-
-                    # Get the count of items in the SN subcollection
                     sn_count = self.get_sn_count(collection, company.id)
                     company_data['sn_count'] = sn_count
-
                     result.append(company_data)
                     logging.debug(f"Processed company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
                 except Exception as e:
                     logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
-                    # Skip this company and continue with the next one
                     continue
 
             logging.info(f"Successfully processed {len(result)} companies")
             return result
         except Exception as e:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
-            return []
+            raise  # Allow retry to handle the exception
 
     def get_sn_count(self, collection, company_id):
         try:
@@ -146,13 +140,19 @@ class FirestoreService:
 
     def update_company(self, collection, company_id, data):
         try:
-            query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
-            docs = query.get()
+            # First, try to get the document directly by its Firestore ID
+            doc_ref = self.db.collection(collection).document(company_id)
+            doc = doc_ref.get()
 
-            if not docs:
-                raise ValueError(f"No company found with ID: {company_id}")
+            if not doc.exists:
+                # If not found, try querying by the 'Id' field
+                query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
+                docs = query.get()
 
-            doc_ref = docs[0].reference
+                if not docs:
+                    raise ValueError(f"No company found with ID: {company_id}")
+                doc_ref = docs[0].reference
+
             sn_list = data.pop('SN', None)  # Remove SN from main data
             data['LastModified'] = self.server_timestamp()
 
@@ -169,6 +169,24 @@ class FirestoreService:
             return True
         except Exception as e:
             logging.error(f"Error updating company: {e}")
+            raise
+
+    def update_sn_list(self, company_id, sn_list):
+        try:
+            company_ref = self.db.collection("Company_Install").document(company_id)
+
+            # Delete existing SN documents
+            existing_sn_docs = company_ref.collection('SN').get()
+            for doc in existing_sn_docs:
+                doc.reference.delete()
+
+            # Add new SN documents
+            for sn in sn_list:
+                company_ref.collection('SN').add({'SN': sn})
+
+            logging.info(f"Successfully updated SN list for company {company_id}")
+        except Exception as e:
+            logging.error(f"Error updating SN list for company {company_id}: {e}", exc_info=True)
             raise
 
     def prepare_data_for_save(self, data):
