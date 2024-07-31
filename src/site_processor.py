@@ -1,8 +1,7 @@
-import logging
-
 import pandas as pd
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from PyQt6.QtCore import QObject, pyqtSignal
+import logging
 
 class SiteProcessor(QObject):
     processing_complete = pyqtSignal()
@@ -25,6 +24,12 @@ class SiteProcessor(QObject):
                     "CompanyCode": str(row["Telephely kód"]),
                     "quantity": int(row["Összes terminál igény"]),
                     "ProgramName": self.parent().festival_combo.currentText(),
+                    "LastModified": self.firestore_service.server_timestamp(),
+                    "LastAdded": self.firestore_service.server_timestamp(),
+                }
+
+                # Add default values for other fields
+                site_data.update({
                     "1": "TELEPÍTHETŐ",
                     "2": "KIADVA",
                     "3": False,
@@ -34,9 +39,7 @@ class SiteProcessor(QObject):
                     "7": False,
                     "8": False,
                     "9": False,
-                    "LastModified": self.firestore_service.server_timestamp(),
-                    "LastAdded": self.firestore_service.server_timestamp(),
-                }
+                })
 
                 existing_company = self.firestore_service.get_company("Company_Install", site_data["Id"])
                 if existing_company:
