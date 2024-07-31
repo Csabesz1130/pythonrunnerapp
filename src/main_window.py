@@ -6,7 +6,7 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
-                             QFileDialog, QApplication, QCheckBox, QAbstractItemView)
+                             QFileDialog, QApplication, QCheckBox, QAbstractItemView, QProgressBar)
 from PyQt6.QtCore import Qt, QTimer
 
 from src.company_details_view_install import CompanyDetailsViewInstall
@@ -109,6 +109,16 @@ class MainWindow(QMainWindow):
             self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
             self.main_layout.addWidget(self.select_all_checkbox)
 
+            # Add progress bar
+            self.progress_bar = QProgressBar(self)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setTextVisible(True)
+            self.main_layout.addWidget(self.progress_bar)
+
+            # For testing, make the progress bar visible initially
+            self.progress_bar.show()
+
             # Button layout
             logging.info("Setting up button layout")
             button_layout = QHBoxLayout()
@@ -144,11 +154,15 @@ class MainWindow(QMainWindow):
             if index > 0:  # 0 is the "Select a festival" placeholder
                 logging.info("Valid festival selected. Enabling buttons and loading companies.")
                 self.set_buttons_enabled(True)
+                self.progress_bar.setValue(0)  # Reset progress bar
+                self.progress_bar.show()  # Ensure progress bar is visible
+                QApplication.processEvents()  # Force GUI update
                 self.load_companies()
             else:
                 logging.info("No festival selected. Disabling buttons and clearing table.")
                 self.set_buttons_enabled(False)
                 self.company_table.setRowCount(0)  # Clear the table
+                self.progress_bar.hide()  # Hide progress bar
             logging.info("Festival change handled successfully")
         except Exception as e:
             logging.error(f"Error in on_festival_changed: {e}", exc_info=True)
@@ -280,29 +294,48 @@ class MainWindow(QMainWindow):
                 return
 
             logging.info(f"Loading companies for collection: {collection}, festival: {festival}")
-            companies = self.firestore_service.get_companies(collection, festival)
 
+            self.progress_bar.setValue(0)
+            self.progress_bar.show()
+            QApplication.processEvents()
+
+            # Step 1: Fetch companies (20% of progress)
+            self.progress_bar.setValue(10)
+            QApplication.processEvents()
+            companies = self.firestore_service.get_companies(collection, festival)
+            self.progress_bar.setValue(20)
+            QApplication.processEvents()
+
+            # Step 2: Prepare table (10% of progress)
             self.company_table.setSortingEnabled(False)
             self.company_table.clear()
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
             self.company_table.setHorizontalHeaderLabels(headers)
-
             self.company_table.setRowCount(len(companies))
-            for row, company in enumerate(companies):
+            self.progress_bar.setValue(30)
+            QApplication.processEvents()
+
+            # Step 3: Populate table (60% of progress)
+            total_companies = len(companies)
+            for i, company in enumerate(companies):
                 for col, header in enumerate(headers):
                     if header == "ID":
                         value = company.get('Id', '')
                     else:
                         value = self.get_company_value(company, header, collection)
                     item = QTableWidgetItem(str(value))
-                    self.company_table.setItem(row, col, item)
+                    self.company_table.setItem(i, col, item)
 
+                if i % 10 == 0:  # Update progress every 10 companies
+                    progress = 30 + int((i / total_companies) * 60)
+                    self.progress_bar.setValue(progress)
+                    QApplication.processEvents()
+
+            # Step 4: Finalize (10% of progress)
             self.company_table.resizeColumnsToContents()
-
-            if not companies:
-                logging.info(f"No companies found for collection: {collection}, festival: {festival}")
-                QMessageBox.information(self, "No Data", "No companies found for the selected criteria.")
+            self.progress_bar.setValue(95)
+            QApplication.processEvents()
 
             self.update_filter_inputs()
 
@@ -313,11 +346,30 @@ class MainWindow(QMainWindow):
                     self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
 
             self.company_table.setSortingEnabled(True)
+            self.progress_bar.setValue(100)
+            QApplication.processEvents()
+
+            QTimer.singleShot(500, self.progress_bar.hide)  # Hide progress bar after 500ms
             logging.info("Companies loaded successfully")
 
         except Exception as e:
             logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
+            self.progress_bar.hide()
+
+    def finish_loading(self):
+        self.company_table.resizeColumnsToContents()
+        self.update_filter_inputs()
+
+        if self.current_sort_column != -1:
+            if self.get_headers_for_collection(self.get_current_collection())[self.current_sort_column] in ["Igény", "Kiadott"]:
+                self.sort_table(self.current_sort_column)
+            else:
+                self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
+
+        self.company_table.setSortingEnabled(True)
+        self.progress_bar.hide()
+        logging.info("Companies loaded successfully")
 
     def get_current_collection(self):
         return "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
