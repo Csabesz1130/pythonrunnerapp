@@ -6,7 +6,7 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
-                             QFileDialog, QApplication, QCheckBox, QAbstractItemView, QProgressBar)
+                             QFileDialog, QApplication, QCheckBox, QAbstractItemView, QProgressBar, QLabel)
 from PyQt6.QtCore import Qt, QTimer
 
 from src.company_details_view_install import CompanyDetailsViewInstall
@@ -109,15 +109,21 @@ class MainWindow(QMainWindow):
             self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
             self.main_layout.addWidget(self.select_all_checkbox)
 
-            # Add progress bar
+            # Add progress bar and label
+            progress_layout = QHBoxLayout()
             self.progress_bar = QProgressBar(self)
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(0)
             self.progress_bar.setTextVisible(True)
-            self.main_layout.addWidget(self.progress_bar)
+            progress_layout.addWidget(self.progress_bar)
 
-            # For testing, make the progress bar visible initially
-            self.progress_bar.show()
+            self.progress_label = QLabel("Ready", self)
+            progress_layout.addWidget(self.progress_label)
+
+            self.main_layout.addLayout(progress_layout)
+
+            self.progress_bar.hide()
+            self.progress_label.hide()
 
             # Button layout
             logging.info("Setting up button layout")
@@ -297,26 +303,33 @@ class MainWindow(QMainWindow):
 
             self.progress_bar.setValue(0)
             self.progress_bar.show()
+            self.progress_label.setText("Preparing to load companies...")
+            self.progress_label.show()
             QApplication.processEvents()
 
-            # Step 1: Fetch companies (20% of progress)
-            self.progress_bar.setValue(10)
-            QApplication.processEvents()
+            # Initialize progress
+            self.current_progress = 0
+            self.target_progress = 0
+
+            # Start progress timer
+            self.progress_timer = QTimer(self)
+            self.progress_timer.timeout.connect(self.update_progress)
+            self.progress_timer.start(50)  # Update every 50ms
+
+            # Step 1: Fetch companies (target 20%)
+            self.set_progress_target(20, "Fetching companies...")
             companies = self.firestore_service.get_companies(collection, festival)
-            self.progress_bar.setValue(20)
-            QApplication.processEvents()
 
-            # Step 2: Prepare table (10% of progress)
+            # Step 2: Prepare table (target 30%)
+            self.set_progress_target(30, "Preparing table...")
             self.company_table.setSortingEnabled(False)
             self.company_table.clear()
             headers = self.get_headers_for_collection(collection)
             self.company_table.setColumnCount(len(headers))
             self.company_table.setHorizontalHeaderLabels(headers)
             self.company_table.setRowCount(len(companies))
-            self.progress_bar.setValue(30)
-            QApplication.processEvents()
 
-            # Step 3: Populate table (60% of progress)
+            # Step 3: Populate table (target 90%)
             total_companies = len(companies)
             for i, company in enumerate(companies):
                 for col, header in enumerate(headers):
@@ -327,16 +340,13 @@ class MainWindow(QMainWindow):
                     item = QTableWidgetItem(str(value))
                     self.company_table.setItem(i, col, item)
 
-                if i % 10 == 0:  # Update progress every 10 companies
-                    progress = 30 + int((i / total_companies) * 60)
-                    self.progress_bar.setValue(progress)
-                    QApplication.processEvents()
+                if i % 5 == 0 or i == total_companies - 1:  # Update progress every 5 companies or on last company
+                    progress = 30 + int((i + 1) / total_companies * 60)
+                    self.set_progress_target(progress, f"Populating table... ({i+1}/{total_companies})")
 
-            # Step 4: Finalize (10% of progress)
+            # Step 4: Finalize (target 100%)
+            self.set_progress_target(95, "Finalizing...")
             self.company_table.resizeColumnsToContents()
-            self.progress_bar.setValue(95)
-            QApplication.processEvents()
-
             self.update_filter_inputs()
 
             if self.current_sort_column != -1:
@@ -346,16 +356,40 @@ class MainWindow(QMainWindow):
                     self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
 
             self.company_table.setSortingEnabled(True)
-            self.progress_bar.setValue(100)
-            QApplication.processEvents()
 
-            QTimer.singleShot(500, self.progress_bar.hide)  # Hide progress bar after 500ms
+            self.set_progress_target(100, "Loading complete!")
+
+            # Ensure progress reaches 100%
+            while self.current_progress < 100:
+                self.update_progress()
+                QApplication.processEvents()
+
+            self.progress_timer.stop()
+            QTimer.singleShot(1000, self.hide_progress)  # Hide progress after 1 second
             logging.info("Companies loaded successfully")
 
         except Exception as e:
             logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
-            self.progress_bar.hide()
+            self.hide_progress()
+        finally:
+            if self.progress_timer and self.progress_timer.isActive():
+                self.progress_timer.stop()
+
+    def update_progress(self):
+        if self.current_progress < self.target_progress:
+            self.current_progress += 1
+            self.progress_bar.setValue(self.current_progress)
+            QApplication.processEvents()
+
+    def set_progress_target(self, target, label_text):
+        self.target_progress = target
+        self.progress_label.setText(label_text)
+        QApplication.processEvents()
+
+    def hide_progress(self):
+        self.progress_bar.hide()
+        self.progress_label.hide()
 
     def finish_loading(self):
         self.company_table.resizeColumnsToContents()
