@@ -533,9 +533,12 @@ class MainWindow(QMainWindow):
             self.filter_inputs.append(filter_input)
 
     def open_company_details(self, index):
+        logging.debug(f"open_company_details called with index: {index}")
         try:
-            company_id = self.company_table.item(index.row(), 0).text()  # Assuming ID is in the first column (index 0)
+            company_id = self.company_table.item(index.row(), 0).text()
+            logging.debug(f"Company ID: {company_id}")
             collection = self.get_current_collection()
+            logging.debug(f"Collection: {collection}")
             company_data = self.firestore_service.get_company(collection, company_id)
 
             if company_data is None:
@@ -546,10 +549,18 @@ class MainWindow(QMainWindow):
             else:
                 details_view = CompanyDetailsViewDemolition(self.firestore_service, company_id, self, company_data)
 
+            # Disconnect any existing connections to avoid multiple triggers
+            try:
+                details_view.companyUpdated.disconnect()
+            except TypeError:
+                pass  # No connections to disconnect
+
             details_view.companyUpdated.connect(self.load_companies)
+            logging.debug("Opening company details dialog")
             details_view.exec()
+            logging.debug("Company details dialog closed")
         except Exception as e:
-            logging.error(f"Error opening company details: {e}")
+            logging.error(f"Error opening company details: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to open company details: {str(e)}")
 
     def add_company(self):
@@ -730,6 +741,11 @@ class MainWindow(QMainWindow):
         logging.debug(f"Sorting completed for column {logical_index}, order: {self.current_sort_order}")
 
     def connect_signals(self):
+        logging.debug("Connecting signals")
+
+        # Disconnect existing connections first
+        self.company_table.doubleClicked.disconnect()
+
         # Festival combo box
         self.festival_combo.currentIndexChanged.connect(self.on_festival_changed)
 
@@ -755,6 +771,8 @@ class MainWindow(QMainWindow):
 
         # Site processor
         self.site_processor.processing_complete.connect(self.load_companies)
+
+        logging.debug("Signals connected successfully")
 
 
 if __name__ == "__main__":
