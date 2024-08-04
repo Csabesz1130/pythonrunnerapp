@@ -47,6 +47,9 @@ class MainWindow(QMainWindow):
             logging.info("Setting up UI")
             self.setup_ui()
 
+            logging.info("Connecting signals")
+            self.connect_signals()
+
             logging.info("Populating festivals")
             self.populate_festivals()
 
@@ -190,11 +193,12 @@ class MainWindow(QMainWindow):
             raise
 
     def on_search_text_changed(self):
-        # Reset the timer every time the text changes
+        logging.debug("Search text changed, resetting search timer")
         self.search_timer.stop()
         self.search_timer.start(300)  # Wait for 300 ms before filtering
 
     def filter_companies(self):
+        logging.debug("Filtering companies")
         search_text = self.search_input.text().lower()
         for row in range(self.company_table.rowCount()):
             should_show = False
@@ -204,6 +208,7 @@ class MainWindow(QMainWindow):
                     should_show = True
                     break
             self.company_table.setRowHidden(row, not should_show)
+        logging.debug("Company filtering complete")
 
     def apply_filters(self):
         search_text = self.search_input.text().lower()
@@ -234,10 +239,28 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def select_all_changed(self, state):
+        logging.debug(f"Select all checkbox state changed: {state}")
         if state == Qt.CheckState.Checked:
             self.company_table.selectAll()
+            logging.debug("All rows selected")
         else:
             self.company_table.clearSelection()
+            logging.debug("All row selections cleared")
+
+    def import_sites(self):
+        self.site_processor.import_sites()
+
+    def show_import_report(self, report):
+        self.import_report_text.setPlainText(report)
+        QMessageBox.information(self, "Import Complete", "Site data has been successfully imported/updated. Check the report for details.")
+
+    def undo_import(self):
+        self.site_processor.undo_last_import()
+        self.load_companies()  # Refresh the company list after undo
+
+    def redo_import(self):
+        self.site_processor.redo_last_import()
+        self.load_companies()  # Refresh the company list after redo
 
     def populate_festivals(self):
         logging.info("Starting festival population")
@@ -462,6 +485,7 @@ class MainWindow(QMainWindow):
             self.filter_inputs.append(filter_input)
 
     def on_collection_changed(self):
+        logging.info("Collection changed, reloading companies and updating filter inputs")
         self.load_companies()
         self.update_filter_inputs()
 
@@ -704,6 +728,33 @@ class MainWindow(QMainWindow):
         self.current_sort_column = logical_index
         self.sort_table(logical_index)
         logging.debug(f"Sorting completed for column {logical_index}, order: {self.current_sort_order}")
+
+    def connect_signals(self):
+        # Festival combo box
+        self.festival_combo.currentIndexChanged.connect(self.on_festival_changed)
+
+        # Radio buttons for collection selection
+        self.install_radio.toggled.connect(self.on_collection_changed)
+        self.demolition_radio.toggled.connect(self.on_collection_changed)
+
+        # Search input
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+
+        # Company table
+        self.company_table.doubleClicked.connect(self.open_company_details)
+        self.company_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
+
+        # Select all checkbox
+        self.select_all_checkbox.stateChanged.connect(self.select_all_changed)
+
+        # Buttons
+        self.export_button.clicked.connect(self.export_to_excel)
+        self.import_sites_button.clicked.connect(self.site_processor.import_sites)
+        self.refresh_button.clicked.connect(self.load_companies)
+        self.bulk_edit_button.clicked.connect(self.bulk_edit)
+
+        # Site processor
+        self.site_processor.processing_complete.connect(self.load_companies)
 
 
 if __name__ == "__main__":
