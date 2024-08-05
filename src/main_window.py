@@ -6,9 +6,11 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QComboBox, QRadioButton, QLineEdit, QButtonGroup, QMessageBox,
-                             QFileDialog, QApplication, QCheckBox, QAbstractItemView, QProgressBar, QLabel)
-from PyQt6.QtCore import Qt, QTimer
+                             QFileDialog, QApplication, QCheckBox, QAbstractItemView, QProgressBar, QLabel,
+                             QProgressDialog)
+from PyQt6.QtCore import Qt, QTimer, QThreadPool
 
+from src.bulk_edit_worker import BulkEditWorker
 from src.company_details_view_install import CompanyDetailsViewInstall
 from src.company_details_view_demolition import CompanyDetailsViewDemolition
 from src.edit_field_dialog import EditFieldDialog
@@ -163,15 +165,12 @@ class MainWindow(QMainWindow):
             if index > 0:  # 0 is the "Select a festival" placeholder
                 logging.info("Valid festival selected. Enabling buttons and loading companies.")
                 self.set_buttons_enabled(True)
-                self.progress_bar.setValue(0)  # Reset progress bar
-                self.progress_bar.show()  # Ensure progress bar is visible
-                QApplication.processEvents()  # Force GUI update
-                self.load_companies()
+                self.load_companies(force_reload=True)
             else:
                 logging.info("No festival selected. Disabling buttons and clearing table.")
                 self.set_buttons_enabled(False)
-                self.company_table.setRowCount(0)  # Clear the table
-                self.progress_bar.hide()  # Hide progress bar
+                self.company_table.setRowCount(0)
+                self.cached_companies = None  # Clear the cache when no festival is selected
             logging.info("Festival change handled successfully")
         except Exception as e:
             logging.error(f"Error in on_festival_changed: {e}", exc_info=True)
@@ -313,7 +312,14 @@ class MainWindow(QMainWindow):
                     break
             self.company_table.setRowHidden(row, not should_show)
 
-    def load_companies(self):
+    def load_companies(self, force_reload=False):
+        logging.info(f"load_companies called with force_reload={force_reload}")
+
+        if not force_reload and hasattr(self, 'cached_companies'):
+            logging.info("Using cached company data")
+            self.populate_table(self.cached_companies)
+            return
+
         try:
             collection = self.get_current_collection()
             festival = self.festival_combo.currentText()
@@ -326,78 +332,54 @@ class MainWindow(QMainWindow):
 
             self.progress_bar.setValue(0)
             self.progress_bar.show()
-            self.progress_label.setText("Preparing to load companies...")
+            self.progress_label.setText("Fetching companies...")
             self.progress_label.show()
             QApplication.processEvents()
 
-            # Initialize progress
-            self.current_progress = 0
-            self.target_progress = 0
-
-            # Start progress timer
-            self.progress_timer = QTimer(self)
-            self.progress_timer.timeout.connect(self.update_progress)
-            self.progress_timer.start(50)  # Update every 50ms
-
-            # Step 1: Fetch companies (target 20%)
-            self.set_progress_target(20, "Fetching companies...")
             companies = self.firestore_service.get_companies(collection, festival)
+            self.cached_companies = companies
 
-            # Step 2: Prepare table (target 30%)
-            self.set_progress_target(30, "Preparing table...")
-            self.company_table.setSortingEnabled(False)
-            self.company_table.clear()
-            headers = self.get_headers_for_collection(collection)
-            self.company_table.setColumnCount(len(headers))
-            self.company_table.setHorizontalHeaderLabels(headers)
-            self.company_table.setRowCount(len(companies))
+            self.populate_table(companies)
 
-            # Step 3: Populate table (target 90%)
-            total_companies = len(companies)
-            for i, company in enumerate(companies):
-                for col, header in enumerate(headers):
-                    if header == "ID":
-                        value = company.get('Id', '')
-                    else:
-                        value = self.get_company_value(company, header, collection)
-                    item = QTableWidgetItem(str(value))
-                    self.company_table.setItem(i, col, item)
-
-                if i % 5 == 0 or i == total_companies - 1:  # Update progress every 5 companies or on last company
-                    progress = 30 + int((i + 1) / total_companies * 60)
-                    self.set_progress_target(progress, f"Populating table... ({i+1}/{total_companies})")
-
-            # Step 4: Finalize (target 100%)
-            self.set_progress_target(95, "Finalizing...")
-            self.company_table.resizeColumnsToContents()
-            self.update_filter_inputs()
-
-            if self.current_sort_column != -1:
-                if self.get_headers_for_collection(collection)[self.current_sort_column] in ["Igény", "Kiadott"]:
-                    self.sort_table(self.current_sort_column)
-                else:
-                    self.company_table.sortItems(self.current_sort_column, self.current_sort_order)
-
-            self.company_table.setSortingEnabled(True)
-
-            self.set_progress_target(100, "Loading complete!")
-
-            # Ensure progress reaches 100%
-            while self.current_progress < 100:
-                self.update_progress()
-                QApplication.processEvents()
-
-            self.progress_timer.stop()
-            QTimer.singleShot(1000, self.hide_progress)  # Hide progress after 1 second
             logging.info("Companies loaded successfully")
 
         except Exception as e:
             logging.error(f"Error loading companies: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
-            self.hide_progress()
         finally:
-            if self.progress_timer and self.progress_timer.isActive():
-                self.progress_timer.stop()
+            self.progress_bar.hide()
+            self.progress_label.hide()
+
+    def populate_table(self, companies):
+        logging.info(f"Populating table with {len(companies)} companies")
+        self.company_table.setSortingEnabled(False)
+        self.company_table.setRowCount(len(companies))
+
+        headers = self.get_headers_for_collection(self.get_current_collection())
+        self.company_table.setColumnCount(len(headers))
+        self.company_table.setHorizontalHeaderLabels(headers)
+
+        for i, company in enumerate(companies):
+            for col, header in enumerate(headers):
+                if header == "ID":
+                    value = company.get('Id', '')
+                else:
+                    value = self.get_company_value(company, header, self.get_current_collection())
+                item = QTableWidgetItem(str(value))
+                self.company_table.setItem(i, col, item)
+
+            if i % 100 == 0:
+                QApplication.processEvents()
+                logging.debug(f"Populated {i} companies")
+
+        self.company_table.resizeColumnsToContents()
+        self.update_filter_inputs()
+
+        if self.current_sort_column != -1:
+            self.sort_table(self.current_sort_column)
+
+        self.company_table.setSortingEnabled(True)
+        logging.info("Table population complete")
 
     def update_progress(self):
         if self.current_progress < self.target_progress:
@@ -589,43 +571,60 @@ class MainWindow(QMainWindow):
         ExcelExporter.export_to_excel(self, self.company_table, collection)
 
     def bulk_edit(self):
+        logging.debug("Bulk edit method called")
         selected_rows = set()
         for index in self.company_table.selectionModel().selectedRows():
             selected_rows.add(index.row())
 
         if not selected_rows:
+            logging.debug("No rows selected for bulk edit")
             QMessageBox.warning(self, "No Selection", "Please select rows to edit.")
             return
 
         collection = self.get_current_collection()
+        logging.debug(f"Bulk edit for collection: {collection}")
         dialog = EditFieldDialog(collection, self)
+
         if dialog.exec():
+            logging.debug("Edit field dialog accepted")
             field, value = dialog.get_field_and_value()
+            logging.debug(f"Field to edit: {field}, New value: {value}")
             self.apply_bulk_edit(field, value, selected_rows)
+        else:
+            logging.debug("Edit field dialog cancelled")
 
     def apply_bulk_edit(self, field, value, selected_rows):
+        logging.debug(f"Applying bulk edit: field={field}, value={value}, rows={len(selected_rows)}")
         collection = self.get_current_collection()
         field_mapping = self.get_field_mapping(collection)
         db_field = field_mapping.get(field, field)
+
+        # Create progress dialog
+        progress_dialog = QProgressDialog("Applying bulk edit...", "Cancel", 0, len(selected_rows), self)
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setAutoReset(False)
+        progress_dialog.setAutoClose(False)
+        progress_dialog.show()
 
         success_count = 0
         fail_count = 0
         not_found_ids = []
 
-        # Disable UI elements during update, should not be....
-        self.setEnabled(False)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-
         try:
-            for row in selected_rows:
-                company_id = self.company_table.item(row, 1).text()  # Assuming ID is in column 1
+            for i, row in enumerate(selected_rows):
+                if progress_dialog.wasCanceled():
+                    break
+
+                company_id = self.company_table.item(row, 0).text()
                 data = {db_field: value}
 
                 try:
                     success = self.firestore_service.update_company(collection, company_id, data)
                     if success:
                         success_count += 1
-                        logging.info(f"Successfully updated company: ID={company_id}")
+                        logging.debug(f"Successfully updated company: ID={company_id}")
+                        # Update the UI immediately
+                        self.update_table_row(row, field, value)
                     else:
                         fail_count += 1
                         not_found_ids.append(company_id)
@@ -635,18 +634,24 @@ class MainWindow(QMainWindow):
                     fail_count += 1
                     not_found_ids.append(company_id)
 
-            # Show result message
+                progress_dialog.setValue(i + 1)
+                QApplication.processEvents()
+
             self.show_bulk_edit_results(success_count, fail_count, not_found_ids)
-
+        except Exception as e:
+            logging.error(f"Unexpected error during bulk edit: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred during bulk edit: {str(e)}")
         finally:
-            # Re-enable UI elements and restore cursor
-            self.setEnabled(True)
-            QApplication.restoreOverrideCursor()
+            progress_dialog.close()
+            # Refresh the cached data
+            self.load_companies(force_reload=True)
 
-        # Reload data after all updates
-        self.load_companies()
+    def bulk_edit_finished(self, success_count, fail_count, not_found_ids):
+        self.show_bulk_edit_results(success_count, fail_count, not_found_ids)
+        self.load_companies(force_reload=True)
 
     def show_bulk_edit_results(self, success_count, fail_count, not_found_ids):
+        logging.debug(f"Bulk edit results: success={success_count}, fail={fail_count}")
         if success_count > 0:
             QMessageBox.information(self, "Bulk Edit Result", f"Successfully updated {success_count} companies.")
         if fail_count > 0:
@@ -778,7 +783,7 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
     try:
         firestore_service = FirestoreService()
@@ -786,6 +791,6 @@ if __name__ == "__main__":
         window.show()
         sys.exit(app.exec())
     except Exception as e:
-        logging.error(f"An error occurred while starting the application: {e}")
-        QMessageBox.critical(None, "Startup Error", f"An error occurred while starting the application: {str(e)}")
+        logging.critical(f"Unhandled exception in main thread: {e}", exc_info=True)
+        QMessageBox.critical(None, "Critical Error", f"An unhandled error occurred: {str(e)}\n\nThe application will now close.")
         sys.exit(1)

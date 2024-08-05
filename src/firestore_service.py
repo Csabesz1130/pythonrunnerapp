@@ -20,6 +20,7 @@ class FirestoreService:
         cred = credentials.Certificate(credentials_path)
         firebase_admin.initialize_app(cred)
         self.db = firestore.client()
+        self.company_cache = {}
         logging.info("FirestoreService initialized successfully")
 
     def get_festivals(self):
@@ -35,13 +36,18 @@ class FirestoreService:
 
     @retry.Retry(predicate=retry.if_exception_type(Exception))
     def get_companies(self, collection, festival=None):
-        logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
+        cache_key = f"{collection}_{festival}"
+        if cache_key in self.company_cache:
+            logging.info(f"Returning cached companies for {cache_key}")
+            return self.company_cache[cache_key]
+
+        logging.info(f"Fetching companies from Firestore: {collection}, festival: {festival}")
         try:
             companies_ref = self.db.collection(collection)
             if festival and festival != "All Festivals":
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
 
-            companies = list(companies_ref.get())  # Materialize the query results
+            companies = list(companies_ref.get())
 
             if not companies:
                 logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
@@ -60,11 +66,12 @@ class FirestoreService:
                     logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
                     continue
 
+            self.company_cache[cache_key] = result
             logging.info(f"Successfully processed {len(result)} companies")
             return result
         except Exception as e:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
-            raise  # Allow retry to handle the exception
+            raise
 
     def get_sn_count(self, collection, company_id):
         try:
