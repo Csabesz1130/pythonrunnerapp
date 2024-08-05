@@ -1,99 +1,93 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QCheckBox, QPushButton, QTextEdit, QMessageBox
+from .company_details_view_base import CompanyDetailsViewBase
+from PyQt6.QtWidgets import QLineEdit, QTextEdit, QComboBox, QCheckBox, QMessageBox
 from PyQt6.QtCore import pyqtSignal
+import logging
 
-class CompanyDetailsViewInstall(QDialog):
+class CompanyDetailsViewInstall(CompanyDetailsViewBase):
     companyUpdated = pyqtSignal(str)
 
     def __init__(self, firestore_service, company_id, parent=None, company_data=None):
-        super().__init__(parent)
-        self.firestore_service = firestore_service
-        self.company_id = company_id
-        self.company_data = company_data or {}
-        self.setup_ui()
-        self.populate_data()
+        super().__init__(firestore_service, company_id, "Company_Install", parent)
+        if company_data:
+            self.company_data = company_data
+            self.populate_fields()
 
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-
-        self.name_edit = QLineEdit()
-        form_layout.addRow("Company Name:", self.name_edit)
-
-        self.program_combo = QComboBox()
-        form_layout.addRow("Program:", self.program_combo)
-
+    def setup_specific_fields(self):
         self.quantity_edit = QLineEdit()
-        form_layout.addRow("Quantity:", self.quantity_edit)
+        self.form_layout.addRow("Quantity:", self.quantity_edit)
 
         self.sn_edit = QTextEdit()
-        form_layout.addRow("SN List:", self.sn_edit)
+        self.form_layout.addRow("SN List:", self.sn_edit)
 
         self.felderites_combo = QComboBox()
-        self.felderites_combo.addItems(["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
-        form_layout.addRow("Felderítés:", self.felderites_combo)
+        self.felderites_combo.addItems(["", "TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
+        self.form_layout.addRow("Felderítés:", self.felderites_combo)
 
         self.telepites_combo = QComboBox()
-        self.telepites_combo.addItems(["KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"])
-        form_layout.addRow("Telepítés:", self.telepites_combo)
+        self.telepites_combo.addItems(["", "KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"])
+        self.form_layout.addRow("Telepítés:", self.telepites_combo)
 
-        self.eloszto_check = QCheckBox()
-        form_layout.addRow("Elosztó:", self.eloszto_check)
+        self.checkbox_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        self.checkboxes = {}
+        for field in self.checkbox_fields:
+            self.checkboxes[field] = QComboBox()
+            self.checkboxes[field].addItems(["", "Van", "Nincs"])
+            self.form_layout.addRow(f"{field}:", self.checkboxes[field])
 
-        self.aram_check = QCheckBox()
-        form_layout.addRow("Áram:", self.aram_check)
+    def populate_specific_fields(self):
+        self.quantity_edit.setText(str(self.company_data.get("quantity", "")))
+        self.sn_edit.setPlainText("\n".join(self.company_data.get("SN", [])))
 
-        self.halozat_check = QCheckBox()
-        form_layout.addRow("Hálózat:", self.halozat_check)
+        self.set_combo_value(self.felderites_combo, self.company_data.get("felderites", ""))
+        self.set_combo_value(self.telepites_combo, self.company_data.get("telepites", ""))
 
-        self.ptg_check = QCheckBox()
-        form_layout.addRow("PTG:", self.ptg_check)
+        for field in self.checkbox_fields:
+            value = self.company_data.get(field.lower(), "")
+            self.set_combo_value(self.checkboxes[field], self.boolean_to_string(value))
 
-        self.szoftver_check = QCheckBox()
-        form_layout.addRow("Szoftver:", self.szoftver_check)
+    def set_combo_value(self, combo, value):
+        index = combo.findText(str(value))
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        else:
+            combo.setCurrentIndex(0)  # Set to empty if value not found
 
-        self.param_check = QCheckBox()
-        form_layout.addRow("Param:", self.param_check)
+    def boolean_to_string(self, value):
+        if isinstance(value, bool):
+            return "Van" if value else "Nincs"
+        elif isinstance(value, str):
+            return value if value in ["Van", "Nincs"] else ""
+        else:
+            return ""
 
-        self.helyszin_check = QCheckBox()
-        form_layout.addRow("Helyszín:", self.helyszin_check)
+    def string_to_boolean(self, value):
+        if value == "Van":
+            return True
+        elif value == "Nincs":
+            return False
+        else:
+            return None
 
-        layout.addLayout(form_layout)
+    def get_specific_fields_data(self):
+        data = {
+            "quantity": int(self.quantity_edit.text()) if self.quantity_edit.text() else None,
+            "SN": self.sn_edit.toPlainText().split("\n"),
+            "felderites": self.felderites_combo.currentText(),
+            "telepites": self.telepites_combo.currentText(),
+        }
 
-        self.save_button = QPushButton("Save")
-        self.save_button.clicked.connect(self.save_company)
-        layout.addWidget(self.save_button)
+        for field in self.checkbox_fields:
+            value = self.string_to_boolean(self.checkboxes[field].currentText())
+            if value is not None:
+                data[field.lower()] = value
 
-    def populate_data(self):
-        if self.company_data:
-            self.name_edit.setText(self.company_data.get("CompanyName", ""))
-            self.program_combo.setCurrentText(self.company_data.get("ProgramName", ""))
-            self.quantity_edit.setText(str(self.company_data.get("quantity", "")))
-            self.sn_edit.setPlainText("\n".join(self.company_data.get("SN", [])))
-            self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
-            self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
-            self.eloszto_check.setChecked(self.company_data.get("3", False))
-            self.aram_check.setChecked(self.company_data.get("4", False))
-            self.halozat_check.setChecked(self.company_data.get("5", False))
-            self.ptg_check.setChecked(self.company_data.get("6", False))
-            self.szoftver_check.setChecked(self.company_data.get("7", False))
-            self.param_check.setChecked(self.company_data.get("8", False))
-            self.helyszin_check.setChecked(self.company_data.get("9", False))
+        return data
 
     def save_company(self):
         updated_data = {
             "CompanyName": self.name_edit.text(),
             "ProgramName": self.program_combo.currentText(),
-            "quantity": int(self.quantity_edit.text()) if self.quantity_edit.text() else None,
-            "SN": self.sn_edit.toPlainText().split("\n"),
-            "1": self.felderites_combo.currentText(),
-            "2": self.telepites_combo.currentText(),
-            "3": self.eloszto_check.isChecked(),
-            "4": self.aram_check.isChecked(),
-            "5": self.halozat_check.isChecked(),
-            "6": self.ptg_check.isChecked(),
-            "7": self.szoftver_check.isChecked(),
-            "8": self.param_check.isChecked(),
-            "9": self.helyszin_check.isChecked()
+            **self.get_specific_fields_data()
         }
 
         try:
@@ -106,4 +100,5 @@ class CompanyDetailsViewInstall(QDialog):
             QMessageBox.information(self, "Success", "Company data saved successfully!")
             self.accept()
         except Exception as e:
+            logging.error(f"Error saving company data: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to save company data: {str(e)}")

@@ -34,7 +34,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.firestore_service = firestore_service
         self.pending_updates = []
-        self.listener = None
+        self.listener = None  # Initialize listener attribute
         self.setup_ui()
         self.setup_models()
         self.setup_listener()
@@ -88,19 +88,26 @@ class MainWindow(QMainWindow):
             self.proxy_model.setSourceModel(self.source_model)
             self.table_view.setModel(self.proxy_model)
 
-            collection = "Company_Install"
+            collection = "Company_Install"  # or "Company_Demolition" based on your needs
             all_data = self.firestore_service.get_all_documents(collection)
             logging.info(f"Retrieved {len(all_data)} documents from {collection}")
 
+            if all_data:
+                logging.info(f"Sample data keys: {list(all_data[0].keys())}")
+
             self.source_model.update_data(all_data, collection)
 
+            # Apply the BooleanColorDelegate to specific columns if they exist
             boolean_delegate = BooleanColorDelegate(self.table_view)
             boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
             for column_index, header in enumerate(self.source_model._headers):
                 if header in boolean_fields:
                     self.table_view.setItemDelegateForColumn(column_index, boolean_delegate)
 
+            # Resize columns to content
             self.table_view.resizeColumnsToContents()
+
+            logging.info(f"Model setup complete. Headers: {self.source_model._headers}")
 
         except Exception as e:
             logging.error(f"Error setting up models: {e}", exc_info=True)
@@ -124,7 +131,7 @@ class MainWindow(QMainWindow):
         if not self.pending_updates:
             return
 
-        batch_size = 100
+        batch_size = 100  # Process updates in batches of 100
         logging.debug(f"Processing {len(self.pending_updates)} updates")
         try:
             self.source_model.beginResetModel()
@@ -138,6 +145,7 @@ class MainWindow(QMainWindow):
                     else:
                         self.source_model.update_single_item(data)
 
+                # Allow UI to update between batches
                 QApplication.processEvents()
 
             self.source_model.endResetModel()

@@ -1,148 +1,133 @@
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox,
+                             QCheckBox, QPushButton, QTextEdit, QMessageBox)
+from PyQt6.QtCore import pyqtSignal
 import logging
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
-                             QCheckBox, QComboBox, QTextEdit, QPushButton, QMessageBox)
-from PyQt6.QtCore import Qt, pyqtSignal
-from datetime import datetime
-from src.company_details_view_base import CompanyDetailsViewBase
 
 class CompanyDetailsView(QDialog):
     companyUpdated = pyqtSignal(str)
 
-    def __init__(self, firestore_service, company_id=None, parent=None):
+    def __init__(self, firestore_service, company_id, collection, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Company Details - Demolition")
-        self.setGeometry(200, 200, 600, 800)
         self.firestore_service = firestore_service
         self.company_id = company_id
+        self.collection = collection
         self.company_data = {}
+        self.fields = {}
+        self.field_mapping = self.get_field_mapping(collection)
         self.setup_ui()
-        if company_id:
-            self.load_company_data()
-        self.set_edit_mode(False)
+        self.load_company_data()
+
+    def get_field_mapping(self, collection):
+        # This should be the same as in DynamicFirestoreModel
+        common_fields = {
+            "Id": "ID",
+            "CompanyName": "Name",
+            "ProgramName": "Program",
+            "LastAdded": "LastAdded",
+            "LastModified": "Last Modified"
+        }
+
+        if collection == "Company_Install":
+            specific_fields = {
+                "quantity": "Igény",
+                "SN": "Kiadott",
+                "1": "Felderítés",
+                "2": "Telepítés",
+                "3": "Elosztó",
+                "4": "Áram",
+                "5": "Hálózat",
+                "6": "PTG",
+                "7": "Szoftver",
+                "8": "Param",
+                "9": "Helyszín",
+            }
+        elif collection == "Company_Demolition":
+            specific_fields = {
+                "1": "Bontás",
+                "2": "Felszerelés",
+                "3": "Bázis Leszerelés",
+            }
+        else:
+            logging.warning(f"Unknown collection: {collection}")
+            specific_fields = {}
+
+        return {**common_fields, **specific_fields}
 
     def setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        self.setWindowTitle("Company Details")
+        layout = QVBoxLayout(self)
+        self.form_layout = QFormLayout()
+        layout.addLayout(self.form_layout)
 
-        self.id_label = QLabel()
-        form_layout.addRow("ID:", self.id_label)
-
-        self.name_edit = QLineEdit()
-        form_layout.addRow("Company Name:", self.name_edit)
-
-        self.program_edit = QLineEdit()
-        form_layout.addRow("Program:", self.program_edit)
-
-        self.bontas_combo = QComboBox()
-        self.bontas_combo.addItems(["Bontható", "Még Nyitva", "Nem Hozzáférhető"])
-        form_layout.addRow("Field 1 (Bontás):", self.bontas_combo)
-
-        self.felszereles_combo = QComboBox()
-        self.felszereles_combo.addItems(["CSOMAGOLVA", "SZÁLLÍTÁSRA_VÁR", "ELSZÁLLÍTVA", "NINCS_STATUSZ"])
-        form_layout.addRow("Felszerelés:", self.felszereles_combo)
-
-        self.bazis_leszereles_check = QCheckBox()
-        form_layout.addRow("Bázis Leszerelés:", self.bazis_leszereles_check)
-
-        self.last_modified_label = QLabel()
-        form_layout.addRow("Last Modified:", self.last_modified_label)
-
-        main_layout.addLayout(form_layout)
-
-        button_layout = QHBoxLayout()
-        self.edit_button = QPushButton("Edit")
-        self.edit_button.clicked.connect(lambda: self.set_edit_mode(True))
-        button_layout.addWidget(self.edit_button)
-
-        self.save_button = QPushButton("Save Changes")
+        self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_company)
-        button_layout.addWidget(self.save_button)
+        layout.addWidget(self.save_button)
 
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.cancel_edit)
-        button_layout.addWidget(self.cancel_button)
+    def create_dynamic_fields(self):
+        for key, value in self.company_data.items():
+            field_name = self.field_mapping.get(key, key)
 
-        self.delete_button = QPushButton("Delete Company")
-        self.delete_button.clicked.connect(self.delete_company)
-        button_layout.addWidget(self.delete_button)
+            if key in ['Id', 'CreatedAt', 'LastModified', 'LastAdded']:
+                field = QLineEdit()
+                field.setReadOnly(True)
+            elif isinstance(value, bool):
+                field = QCheckBox()
+            elif isinstance(value, (int, float)):
+                field = QLineEdit()
+                field.setValidator(QDoubleValidator() if isinstance(value, float) else QIntValidator())
+            elif key in ['1', '2']:  # Assuming these are combo box fields
+                field = QComboBox()
+                field.addItems(["", "TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
+            else:
+                field = QLineEdit()
 
-        main_layout.addLayout(button_layout)
+            self.fields[key] = field
+            self.form_layout.addRow(field_name, field)
+
+    def populate_fields(self):
+        for key, field in self.fields.items():
+            value = self.company_data.get(key, '')
+            if isinstance(field, QLineEdit):
+                field.setText(str(value))
+            elif isinstance(field, QCheckBox):
+                field.setChecked(bool(value))
+            elif isinstance(field, QComboBox):
+                index = field.findText(str(value))
+                if index >= 0:
+                    field.setCurrentIndex(index)
 
     def load_company_data(self):
-        try:
-            self.company_data = self.firestore_service.get_company("Company_Demolition", self.company_id)
-            self.update_ui_with_data()
-        except Exception as e:
-            logging.error(f"Error loading company data: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to load company data: {str(e)}")
-
-    def update_ui_with_data(self):
-        self.id_label.setText(str(self.company_data.get("Id", "")))
-        self.name_edit.setText(self.company_data.get("CompanyName", ""))
-        self.program_edit.setText(self.company_data.get("ProgramName", ""))
-        self.bontas_combo.setCurrentText(self.company_data.get("1", "Bontható"))
-        self.felszereles_combo.setCurrentText(self.company_data.get("Felszerelés", "NINCS_STATUSZ"))
-        self.bazis_leszereles_check.setChecked(self.company_data.get("Bázis Leszerelés", False))
-        last_modified = self.company_data.get("LastModified")
-        if last_modified:
-            self.last_modified_label.setText(last_modified.strftime("%Y-%m-%d %H:%M:%S"))
-        else:
-            self.last_modified_label.setText("")
-
-    def set_edit_mode(self, editable):
-        self.name_edit.setEnabled(editable)
-        self.program_edit.setEnabled(editable)
-        self.bontas_combo.setEnabled(editable)
-        self.felszereles_combo.setEnabled(editable)
-        self.bazis_leszereles_check.setEnabled(editable)
-        self.save_button.setEnabled(editable)
-        self.cancel_button.setEnabled(editable)
-        self.edit_button.setEnabled(not editable)
-        self.delete_button.setEnabled(not editable)
+        if self.company_id:
+            try:
+                self.company_data = self.firestore_service.get_company(self.collection, self.company_id)
+                if self.company_data:
+                    self.create_dynamic_fields()
+                    self.populate_fields()
+                else:
+                    QMessageBox.warning(self, "Not Found", f"Company with ID {self.company_id} not found.")
+            except Exception as e:
+                logging.error(f"Error loading company data: {e}", exc_info=True)
+                QMessageBox.critical(self, "Error", f"Failed to load company data: {str(e)}")
 
     def save_company(self):
+        updated_data = {}
+        for key, field in self.fields.items():
+            if isinstance(field, QLineEdit):
+                updated_data[key] = field.text()
+            elif isinstance(field, QCheckBox):
+                updated_data[key] = field.isChecked()
+            elif isinstance(field, QComboBox):
+                updated_data[key] = field.currentText()
+
         try:
-            data = {
-                "CompanyName": self.name_edit.text(),
-                "ProgramName": self.program_edit.text(),
-                "Field 1": self.bontas_combo.currentText(),
-                "Felszerelés": self.felszereles_combo.currentText(),
-                "Bázis Leszerelés": self.bazis_leszereles_check.isChecked(),
-                "LastModified": datetime.now()
-            }
-
             if self.company_id:
-                self.firestore_service.update_company("Company_Demolition", self.company_id, data)
+                self.firestore_service.update_company(self.collection, self.company_id, updated_data)
             else:
-                self.company_id = self.firestore_service.add_company("Company_Demolition", data)
+                self.company_id = self.firestore_service.add_company(self.collection, updated_data)
 
-            self.set_edit_mode(False)
-            self.load_company_data()  # Refresh data after save
             self.companyUpdated.emit(self.company_id)
             QMessageBox.information(self, "Success", "Company data saved successfully!")
+            self.accept()
         except Exception as e:
-            logging.error(f"Error saving company data: {e}")
+            logging.error(f"Error saving company data: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to save company data: {str(e)}")
-
-    def cancel_edit(self):
-        if self.company_id:
-            self.load_company_data()
-        else:
-            self.close()
-        self.set_edit_mode(False)
-
-    def delete_company(self):
-        if not self.company_id:
-            return
-
-        reply = QMessageBox.question(self, "Delete Company", "Are you sure you want to delete this company?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                self.firestore_service.delete_company("Company_Demolition", self.company_id)
-                QMessageBox.information(self, "Success", "Company deleted successfully!")
-                self.companyUpdated.emit(self.company_id)
-                self.accept()  # Close the dialog
-            except Exception as e:
-                logging.error(f"Error deleting company: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to delete company: {str(e)}")
