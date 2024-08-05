@@ -698,6 +698,22 @@ class MainWindow(QMainWindow):
 
         return {**common_fields, **specific_fields}
 
+    def update_table_row(self, row, field, value):
+        column = self.get_column_for_field(field)
+        if column is not None:
+            display_value = self.get_display_value(value)
+            item = QTableWidgetItem(str(display_value))
+            self.company_table.setItem(row, column, item)
+            self.company_table.viewport().update()
+
+    def get_column_for_field(self, field):
+        headers = self.get_headers_for_collection(self.get_current_collection())
+        try:
+            return headers.index(field)
+        except ValueError:
+            logging.warning(f"Field {field} not found in headers")
+            return None
+
     def sort_table(self, column):
         self.company_table.setSortingEnabled(False)
         header = self.company_table.horizontalHeaderItem(column).text()
