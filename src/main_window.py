@@ -572,9 +572,7 @@ class MainWindow(QMainWindow):
 
     def bulk_edit(self):
         logging.debug("Bulk edit method called")
-        selected_rows = set()
-        for index in self.company_table.selectionModel().selectedRows():
-            selected_rows.add(index.row())
+        selected_rows = set(index.row() for index in self.company_table.selectionModel().selectedRows())
 
         if not selected_rows:
             logging.debug("No rows selected for bulk edit")
