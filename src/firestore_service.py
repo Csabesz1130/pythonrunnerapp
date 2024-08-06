@@ -152,6 +152,11 @@ class FirestoreService:
             if not snapshot.exists:
                 raise ValueError(f"No company found with ID: {company_id}")
 
+            # Convert boolean fields to numeric representation
+            for key, value in data.items():
+                if key in ['3', '4', '5', '6', '7', '8', '9']:
+                    data[key] = 1 if value else 0
+
             transaction.update(doc_ref, data)
             return True
 

@@ -2,6 +2,7 @@ import csv
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -359,18 +360,15 @@ class MainWindow(QMainWindow):
         self.company_table.setColumnCount(len(headers))
         self.company_table.setHorizontalHeaderLabels(headers)
 
-        for i, company in enumerate(companies):
+        for row, company in enumerate(companies):
             for col, header in enumerate(headers):
-                if header == "ID":
-                    value = company.get('Id', '')
-                else:
-                    value = self.get_company_value(company, header, self.get_current_collection())
+                value = self.get_company_value(company, header, self.get_current_collection())
                 item = QTableWidgetItem(str(value))
-                self.company_table.setItem(i, col, item)
+                self.company_table.setItem(row, col, item)
 
-            if i % 100 == 0:
+            if row % 100 == 0:
                 QApplication.processEvents()
-                logging.debug(f"Populated {i} companies")
+                logging.debug(f"Populated {row} companies")
 
         self.company_table.resizeColumnsToContents()
         self.update_filter_inputs()
@@ -380,6 +378,26 @@ class MainWindow(QMainWindow):
 
         self.company_table.setSortingEnabled(True)
         logging.info("Table population complete")
+
+    def get_company_value(self, company, header, collection):
+        field_mapping = self.get_field_mapping(collection)
+        field = next((f for f, h in field_mapping.items() if h == header), None)
+        if field is None:
+            return ""
+
+        value = company.get(field, "")
+        if header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]:
+            return "Van" if value else "Nincs"
+        elif header in ["LastAdded", "Last Modified"]:
+            if isinstance(value, datetime):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            return str(value) if value else ""
+        elif header == "Igény":
+            return str(value) if value is not None else ""
+        elif header == "Kiadott":
+            return str(company.get('sn_count', 0))
+        else:
+            return str(value)
 
     def update_progress(self):
         if self.current_progress < self.target_progress:
@@ -571,28 +589,73 @@ class MainWindow(QMainWindow):
         ExcelExporter.export_to_excel(self, self.company_table, collection)
 
     def bulk_edit(self):
-        logging.debug("Bulk edit method called")
         selected_rows = set(index.row() for index in self.company_table.selectionModel().selectedRows())
 
         if not selected_rows:
-            logging.debug("No rows selected for bulk edit")
             QMessageBox.warning(self, "No Selection", "Please select rows to edit.")
             return
 
         collection = self.get_current_collection()
-        logging.debug(f"Bulk edit for collection: {collection}")
         dialog = EditFieldDialog(collection, self)
 
         if dialog.exec():
-            logging.debug("Edit field dialog accepted")
             field, value = dialog.get_field_and_value()
-            logging.debug(f"Field to edit: {field}, New value: {value}")
-            self.apply_bulk_edit(field, value, selected_rows)
-        else:
-            logging.debug("Edit field dialog cancelled")
+            if self.confirm_bulk_edit(field, value, len(selected_rows)):
+                self.apply_bulk_edit(field, value, selected_rows)
+
+    def confirm_bulk_edit(self, field, value, count):
+        msg = f"Are you sure you want to set '{field}' to '{value}' for {count} selected companies?"
+        reply = QMessageBox.question(self, 'Confirm Bulk Edit', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
+
+    def get_display_value(self, field, value):
+        if field in ['3', '4', '5', '6', '7', '8', '9']:
+            return "Van" if value else "Nincs"
+        return str(value)
+
+    def validate_input(self, field, value):
+        logging.debug(f"Validating input: field={field}, value={value}")
+
+        # Validate boolean fields
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        if field in boolean_fields:
+            if value not in ["Van", "Nincs"]:
+                QMessageBox.warning(self, "Invalid Input", f"'{field}' must be either 'Van' or 'Nincs'.")
+                return False
+
+        # Validate Felderítés field
+        if field == "Felderítés":
+            valid_values = ["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"]
+            if value not in valid_values:
+                QMessageBox.warning(self, "Invalid Input", f"'{field}' must be one of: {', '.join(valid_values)}")
+                return False
+
+        # Validate Telepítés field
+        if field == "Telepítés":
+            valid_values = ["KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"]
+            if value not in valid_values:
+                QMessageBox.warning(self, "Invalid Input", f"'{field}' must be one of: {', '.join(valid_values)}")
+                return False
+
+        # Validate Igény field (assuming it should be a non-negative integer)
+        if field == "Igény":
+            try:
+                int_value = int(value)
+                if int_value < 0:
+                    raise ValueError
+            except ValueError:
+                QMessageBox.warning(self, "Invalid Input", f"'{field}' must be a non-negative integer.")
+                return False
+
+        # Add more validation rules for other fields as needed
+
+        logging.debug("Input validation passed")
+        return True
 
     def apply_bulk_edit(self, field, value, selected_rows):
-        logging.debug(f"Applying bulk edit: field={field}, value={value}, rows={len(selected_rows)}")
+        if not self.validate_input(field, value):
+            return
+
         collection = self.get_current_collection()
         field_mapping = self.get_field_mapping(collection)
         db_field = field_mapping.get(field, field)
@@ -607,32 +670,37 @@ class MainWindow(QMainWindow):
         fail_count = 0
         not_found_ids = []
 
+        start_time = time.time()
+        last_update_time = start_time
+
         try:
             for i, row in enumerate(selected_rows):
                 if progress_dialog.wasCanceled():
                     break
 
+                current_time = time.time()
+                if current_time - last_update_time > 1:  # Rate limiting: update max once per second
+                    progress_dialog.setValue(i)
+                    QApplication.processEvents()
+                    last_update_time = current_time
+
                 company_id = self.company_table.item(row, 0).text()
-                data = {db_field: value}
+                data = {db_field: self.convert_value_for_db(db_field, value)}
 
                 try:
-                    success = self.firestore_service.update_company(collection, company_id, data)
+                    success = self.firestore_service.update_company_transaction(collection, company_id, data)
                     if success:
                         success_count += 1
-                        logging.debug(f"Successfully updated company: ID={company_id}")
                         self.update_table_row(row, field, value)
                         self.update_cached_company(company_id, db_field, value)
+                        self.log_audit("bulk_edit", company_id, {field: value})
                     else:
                         fail_count += 1
                         not_found_ids.append(company_id)
-                        logging.warning(f"Failed to update company: ID={company_id}")
                 except Exception as e:
                     logging.error(f"Error updating company {company_id}: {str(e)}")
                     fail_count += 1
                     not_found_ids.append(company_id)
-
-                progress_dialog.setValue(i + 1)
-                QApplication.processEvents()
 
             self.show_bulk_edit_results(success_count, fail_count, not_found_ids)
         except Exception as e:
@@ -640,8 +708,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An unexpected error occurred during bulk edit: {str(e)}")
         finally:
             progress_dialog.close()
-            logging.info("Bulk edit operation completed")
             self.load_companies(force_reload=True)
+
+    def convert_value_for_db(self, field, value):
+        if field in ['3', '4', '5', '6', '7', '8', '9']:
+            return value == "Van"
+        return value
 
     def update_cached_company(self, company_id, field, value):
         if hasattr(self, 'cached_companies'):
@@ -650,6 +722,13 @@ class MainWindow(QMainWindow):
                     company[field] = value
                     logging.debug(f"Updated company {company_id} in cache: {field}={value}")
                     break
+
+    def log_audit(self, action, company_id, changes):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{timestamp} - {action}: Company ID {company_id}, Changes: {changes}"
+        with open("audit_log.txt", "a") as log_file:
+            log_file.write(log_entry + "\n")
+        logging.info(log_entry)
 
     def bulk_edit_finished(self, success_count, fail_count, not_found_ids):
         self.show_bulk_edit_results(success_count, fail_count, not_found_ids)
@@ -672,32 +751,32 @@ class MainWindow(QMainWindow):
 
     def get_field_mapping(self, collection):
         common_fields = {
-            "Id": "ID",
-            "CompanyName": "Name",
-            "ProgramName": "Program",
+            "Id": "Id",
+            "CompanyName": "CompanyName",
+            "ProgramName": "ProgramName",
             "LastAdded": "LastAdded",
-            "LastModified": "Last Modified"
+            "LastModified": "LastModified"
         }
 
         if collection == "Company_Install":
             specific_fields = {
-                "quantity": "Igény",
-                "SN": "Kiadott",
-                "1": "Felderítés",
-                "2": "Telepítés",
-                "3": "Elosztó",
-                "4": "Áram",
-                "5": "Hálózat",
-                "6": "PTG",
-                "7": "Szoftver",
-                "8": "Param",
-                "9": "Helyszín",
+                "Igény": "quantity",
+                "Kiadott": "SN",
+                "Felderítés": "1",
+                "Telepítés": "2",
+                "Elosztó": "3",
+                "Áram": "4",
+                "Hálózat": "5",
+                "PTG": "6",
+                "Szoftver": "7",
+                "Param": "8",
+                "Helyszín": "9",
             }
         elif collection == "Company_Demolition":
             specific_fields = {
-                "1": "Bontás",
-                "2": "Felszerelés",
-                "3": "Bázis Leszerelés",
+                "Bontás": "1",
+                "Felszerelés": "2",
+                "Bázis Leszerelés": "3",
             }
         else:
             logging.warning(f"Unknown collection: {collection}")
@@ -708,7 +787,7 @@ class MainWindow(QMainWindow):
     def update_table_row(self, row, field, value):
         column = self.get_column_for_field(field)
         if column is not None:
-            display_value = self.get_display_value(value)
+            display_value = self.get_display_value(field, value)
             item = QTableWidgetItem(str(display_value))
             self.company_table.setItem(row, column, item)
             self.company_table.viewport().update()
