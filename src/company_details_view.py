@@ -1,5 +1,6 @@
+from PyQt6.QtGui import QDoubleValidator, QIntValidator
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox,
-                             QCheckBox, QPushButton, QTextEdit, QMessageBox)
+                             QCheckBox, QPushButton, QTextEdit, QMessageBox, QHBoxLayout, QLabel, QListWidget)
 from PyQt6.QtCore import pyqtSignal
 import logging
 
@@ -62,6 +63,25 @@ class CompanyDetailsView(QDialog):
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_company)
         layout.addWidget(self.save_button)
+        # Add SN display
+        self.sn_list_widget = QListWidget()
+        self.layout().addWidget(QLabel("SNs/DiDs:"))
+        self.layout().addWidget(self.sn_list_widget)
+
+        # Add SN management buttons
+        sn_button_layout = QHBoxLayout()
+        self.add_sn_button = QPushButton("Add SN")
+        self.remove_sn_button = QPushButton("Remove SN")
+        self.edit_sn_button = QPushButton("Edit SN")
+        sn_button_layout.addWidget(self.add_sn_button)
+        sn_button_layout.addWidget(self.remove_sn_button)
+        sn_button_layout.addWidget(self.edit_sn_button)
+        self.layout().addLayout(sn_button_layout)
+
+        # Connect SN management buttons
+        self.add_sn_button.clicked.connect(self.add_sn)
+        self.remove_sn_button.clicked.connect(self.remove_sn)
+        self.edit_sn_button.clicked.connect(self.edit_sn)
 
     def create_dynamic_fields(self):
         for key, value in self.company_data.items():

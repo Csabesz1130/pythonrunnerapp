@@ -92,6 +92,8 @@ class MainWindow(QMainWindow):
             all_data = self.firestore_service.get_all_documents(collection)
             logging.info(f"Retrieved {len(all_data)} documents from {collection}")
 
+            self.source_model.add_column("SN Count", lambda company: len(self.firestore_service.get_sn_list(company['Id'])))
+
             self.source_model.update_data(all_data, collection)
 
             boolean_delegate = BooleanColorDelegate(self.table_view)
