@@ -597,7 +597,6 @@ class MainWindow(QMainWindow):
         field_mapping = self.get_field_mapping(collection)
         db_field = field_mapping.get(field, field)
 
-        # Create progress dialog
         progress_dialog = QProgressDialog("Applying bulk edit...", "Cancel", 0, len(selected_rows), self)
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setAutoReset(False)
@@ -621,8 +620,8 @@ class MainWindow(QMainWindow):
                     if success:
                         success_count += 1
                         logging.debug(f"Successfully updated company: ID={company_id}")
-                        # Update the UI immediately
                         self.update_table_row(row, field, value)
+                        self.update_cached_company(company_id, db_field, value)
                     else:
                         fail_count += 1
                         not_found_ids.append(company_id)
@@ -641,8 +640,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An unexpected error occurred during bulk edit: {str(e)}")
         finally:
             progress_dialog.close()
-            # Refresh the cached data
+            logging.info("Bulk edit operation completed")
             self.load_companies(force_reload=True)
+
+    def update_cached_company(self, company_id, field, value):
+        if hasattr(self, 'cached_companies'):
+            for company in self.cached_companies:
+                if company.get('Id') == company_id:
+                    company[field] = value
+                    logging.debug(f"Updated company {company_id} in cache: {field}={value}")
+                    break
 
     def bulk_edit_finished(self, success_count, fail_count, not_found_ids):
         self.show_bulk_edit_results(success_count, fail_count, not_found_ids)

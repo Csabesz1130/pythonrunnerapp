@@ -145,14 +145,41 @@ class FirestoreService:
             logging.error(f"Error adding company: {e}")
             raise
 
+    def update_company_transaction(self, collection, company_id, data):
+        @firestore.transactional
+        def update_in_transaction(transaction, doc_ref, data):
+            snapshot = doc_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise ValueError(f"No company found with ID: {company_id}")
+
+            transaction.update(doc_ref, data)
+            return True
+
+        try:
+            doc_ref = self.db.collection(collection).document(company_id)
+            transaction = self.db.transaction()
+            success = update_in_transaction(transaction, doc_ref, data)
+
+            if success:
+                self.invalidate_cache(collection)
+                logging.info(f"Successfully updated company {company_id} in Firestore (transaction)")
+            return success
+        except Exception as e:
+            logging.error(f"Error updating company in transaction: {e}")
+            return False
+
+    def invalidate_cache(self, collection):
+        keys_to_remove = [key for key in self.company_cache if key.startswith(f"{collection}_")]
+        for key in keys_to_remove:
+            del self.company_cache[key]
+        logging.debug(f"Invalidated cache for collection: {collection}")
+
     def update_company(self, collection, company_id, data):
         try:
-            # First, try to get the document directly by its Firestore ID
             doc_ref = self.db.collection(collection).document(company_id)
             doc = doc_ref.get()
 
             if not doc.exists:
-                # If not found, try querying by the 'Id' field
                 query = self.db.collection(collection).where('Id', '==', company_id).limit(1)
                 docs = query.get()
 
@@ -160,23 +187,17 @@ class FirestoreService:
                     raise ValueError(f"No company found with ID: {company_id}")
                 doc_ref = docs[0].reference
 
-            sn_list = data.pop('SN', None)  # Remove SN from main data
-            data['LastModified'] = self.server_timestamp()
+            data['LastModified'] = firestore.SERVER_TIMESTAMP
+            doc_ref.update(data)
 
-            # Preserve LastAdded if it exists, otherwise set it
-            if 'LastAdded' not in doc_ref.get().to_dict():
-                data['LastAdded'] = self.server_timestamp()
+            # Invalidate the cache for this collection
+            self.invalidate_cache(collection)
 
-            doc_ref.update(self.prepare_data_for_save(data))
-
-            # Update SN list if provided
-            if sn_list is not None:
-                self.update_sn_list(company_id, sn_list)
-
+            logging.info(f"Successfully updated company {company_id} in Firestore")
             return True
         except Exception as e:
             logging.error(f"Error updating company: {e}")
-            raise
+            return False
 
     def update_sn_list(self, company_id, sn_list):
         try:
