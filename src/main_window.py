@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import traceback
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -20,6 +21,7 @@ from src.excel_exporter import ExcelExporter
 from src.table_filter import FilterableTableView
 from src.site_processor import SiteProcessor
 from src.excel_exporter import ExcelExporter  # Make sure to import this
+from src.data_fetch_thread import DataFetchThread
 
 
 class MainWindow(QMainWindow):
@@ -163,19 +165,25 @@ class MainWindow(QMainWindow):
     def on_festival_changed(self, index):
         logging.info(f"Festival changed. New index: {index}")
         try:
+            # Disconnect the signal temporarily to prevent recursive calls
+            self.festival_combo.currentIndexChanged.disconnect(self.on_festival_changed)
+
             if index > 0:  # 0 is the "Select a festival" placeholder
                 logging.info("Valid festival selected. Enabling buttons and loading companies.")
                 self.set_buttons_enabled(True)
-                self.load_companies(force_reload=True)
+                QTimer.singleShot(0, lambda: self.load_companies(force_reload=True))
             else:
                 logging.info("No festival selected. Disabling buttons and clearing table.")
                 self.set_buttons_enabled(False)
                 self.company_table.setRowCount(0)
-                self.cached_companies = None  # Clear the cache when no festival is selected
+
             logging.info("Festival change handled successfully")
         except Exception as e:
             logging.error(f"Error in on_festival_changed: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"An error occurred while changing festivals: {str(e)}")
+        finally:
+            # Reconnect the signal
+            self.festival_combo.currentIndexChanged.connect(self.on_festival_changed)
 
     def set_buttons_enabled(self, enabled):
         logging.info(f"Setting buttons enabled: {enabled}")
@@ -314,19 +322,23 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def load_companies(self, force_reload=False):
-        logging.info(f"load_companies called with force_reload={force_reload}")
-
-        if not force_reload and hasattr(self, 'cached_companies'):
-            logging.info("Using cached company data")
-            self.populate_table(self.cached_companies)
-            return
-
         try:
+            logging.info(f"load_companies called with force_reload={force_reload}")
+
+            if hasattr(self, 'fetch_thread') and self.fetch_thread.isRunning():
+                logging.warning("Data fetch already in progress. Ignoring this call.")
+                return
+
+            self.company_table.setRowCount(0)
+            self.cached_companies = []
+
             collection = self.get_current_collection()
             festival = self.festival_combo.currentText()
 
+            logging.info(f"Selected collection: {collection}, festival: {festival}")
+
             if festival == "Select a festival":
-                self.company_table.setRowCount(0)
+                logging.info("No festival selected. Exiting load_companies.")
                 return
 
             logging.info(f"Loading companies for collection: {collection}, festival: {festival}")
@@ -337,73 +349,82 @@ class MainWindow(QMainWindow):
             self.progress_label.show()
             QApplication.processEvents()
 
-            companies = self.firestore_service.get_companies(collection, festival)
-            self.cached_companies = companies
+            logging.info("Creating DataFetchThread")
+            self.fetch_thread = DataFetchThread(self.firestore_service, collection, festival)
+            self.fetch_thread.data_fetched.connect(self.on_data_fetched)
+            self.fetch_thread.error_occurred.connect(self.on_fetch_error)
+            self.fetch_thread.progress_updated.connect(self.update_progress)
+            self.fetch_thread.finished.connect(self.on_fetch_finished)
 
-            self.populate_table(companies)
-
-            logging.info("Companies loaded successfully")
+            logging.info("Starting DataFetchThread")
+            self.fetch_thread.start()
 
         except Exception as e:
-            logging.error(f"Error loading companies: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load companies: {str(e)}")
-        finally:
-            self.progress_bar.hide()
-            self.progress_label.hide()
+            logging.error(f"Error in load_companies: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An error occurred while loading companies: {str(e)}")
+
+    def on_data_fetched(self, company_data):
+        try:
+            self.cached_companies.extend(company_data)
+            self.populate_table(company_data)
+            logging.info(f"Received data chunk. Total companies loaded: {len(self.cached_companies)}")
+        except Exception as e:
+            logging.error(f"Error in on_data_fetched: {str(e)}", exc_info=True)
+
+    def on_fetch_error(self, error_msg):
+        logging.error(f"Error fetching data: {error_msg}")
+        QMessageBox.critical(self, "Error", f"Failed to load companies: {error_msg}")
 
     def populate_table(self, companies):
-        logging.info(f"Populating table with {len(companies)} companies")
-        self.company_table.setSortingEnabled(False)
-        self.company_table.setRowCount(len(companies))
+        try:
+            current_row = self.company_table.rowCount()
+            self.company_table.setRowCount(current_row + len(companies))
 
-        headers = self.get_headers_for_collection(self.get_current_collection())
-        self.company_table.setColumnCount(len(headers))
-        self.company_table.setHorizontalHeaderLabels(headers)
+            headers = [
+                "ID", "Name", "Program", "LastAdded", "Igény", "Kiadott",
+                "Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat",
+                "PTG", "Szoftver", "Param", "Helyszín", "Last Modified"
+            ]
 
-        for row, company in enumerate(companies):
-            for col, header in enumerate(headers):
-                value = self.get_company_value(company, header, self.get_current_collection())
-                item = QTableWidgetItem(str(value))
-                self.company_table.setItem(row, col, item)
+            if self.company_table.columnCount() == 0:
+                self.company_table.setColumnCount(len(headers))
+                self.company_table.setHorizontalHeaderLabels(headers)
 
-            if row % 100 == 0:
-                QApplication.processEvents()
-                logging.debug(f"Populated {row} companies")
+            for i, company in enumerate(companies):
+                row = current_row + i
+                for col, header in enumerate(headers):
+                    value = self.get_company_value(company, header, self.get_current_collection())
+                    item = QTableWidgetItem(str(value))
+                    self.company_table.setItem(row, col, item)
 
-        self.company_table.resizeColumnsToContents()
-        self.update_filter_inputs()
+            if current_row == 0:
+                self.company_table.resizeColumnsToContents()
 
-        if self.current_sort_column != -1:
-            self.sort_table(self.current_sort_column)
+            logging.debug(f"Populated table with {len(companies)} companies")
+        except Exception as e:
+            logging.error(f"Error in populate_table: {str(e)}", exc_info=True)
 
-        self.company_table.setSortingEnabled(True)
-        logging.info("Table population complete")
-
-    def get_company_value(self, company, header, collection):
-        field_mapping = self.get_field_mapping(collection)
-        field = next((f for f, h in field_mapping.items() if h == header), None)
-        if field is None:
-            return ""
-
-        value = company.get(field, "")
-        if header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]:
-            return "Van" if value else "Nincs"
-        elif header in ["LastAdded", "Last Modified"]:
-            if isinstance(value, datetime):
-                return value.strftime("%Y-%m-%d %H:%M:%S")
-            return str(value) if value else ""
-        elif header == "Igény":
-            return str(value) if value is not None else ""
-        elif header == "Kiadott":
-            return str(company.get('sn_count', 0))
-        else:
-            return str(value)
-
-    def update_progress(self):
-        if self.current_progress < self.target_progress:
-            self.current_progress += 1
-            self.progress_bar.setValue(self.current_progress)
+    def update_progress(self, current, total):
+        try:
+            progress = int((current / total) * 100)
+            self.progress_bar.setValue(progress)
+            self.progress_label.setText(f"Loading companies... {current}/{total}")
+            logging.debug(f"Loading progress: {current}/{total}")
             QApplication.processEvents()
+        except Exception as e:
+            logging.error(f"Error in update_progress: {str(e)}", exc_info=True)
+
+    def on_fetch_finished(self):
+        try:
+            self.progress_bar.hide()
+            self.progress_label.hide()
+            logging.info(f"Data fetch process finished. Total companies loaded: {len(self.cached_companies)}")
+            if self.current_sort_column != -1:
+                self.sort_table(self.current_sort_column)
+            self.company_table.setSortingEnabled(True)
+            QApplication.processEvents()
+        except Exception as e:
+            logging.error(f"Error in on_fetch_finished: {str(e)}", exc_info=True)
 
     def set_progress_target(self, target, label_text):
         self.target_progress = target
@@ -432,36 +453,44 @@ class MainWindow(QMainWindow):
         return "Company_Install" if self.install_radio.isChecked() else "Company_Demolition"
 
     def get_company_value(self, company, header, collection):
-        field_mapping = self.get_field_mapping(collection)
-        field = next((f for f, h in field_mapping.items() if h == header), None)
+        field_mapping = {
+            "ID": "Id",
+            "Name": "CompanyName",
+            "Program": "ProgramName",
+            "LastAdded": "LastAdded",
+            "Igény": "quantity",
+            "Kiadott": "sn_count",
+            "Felderítés": "1",
+            "Telepítés": "2",
+            "Elosztó": "3",
+            "Áram": "4",
+            "Hálózat": "5",
+            "PTG": "6",
+            "Szoftver": "7",
+            "Param": "8",
+            "Helyszín": "9",
+            "Last Modified": "LastModified"
+        }
+
+        field = field_mapping.get(header)
         if field is None:
+            logging.warning(f"No mapping found for header: {header}")
             return ""
 
         value = company.get(field, "")
-        if header == "Igény":
+
+        if header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]:
+            return "Van" if value else "Nincs"
+        elif header in ["LastAdded", "Last Modified"]:
+            if isinstance(value, (datetime, str)):
+                return str(value)
+            return ""
+        elif header == "Igény":
             return str(value) if value is not None else ""
         elif header == "Kiadott":
-            return str(company.get('sn_count', 0))
-        elif header in ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín", "Bázis Leszerelés"]:
-            return "Van" if value else "Nincs"
-        elif header in ["Last Modified", "LastAdded"]:
-            if isinstance(value, datetime):
-                return value.strftime("%Y-%m-%d %H:%M:%S")
-            return str(value) if value else ""
-        else:
             return str(value)
-
-    def apply_filters(self):
-        for row in range(self.company_table.rowCount()):
-            should_show = True
-            for col, filter_input in enumerate(self.filter_inputs):
-                filter_text = filter_input.text().lower()
-                if filter_text:
-                    item = self.company_table.item(row, col)
-                    if item is None or filter_text not in item.text().lower():
-                        should_show = False
-                        break
-            self.company_table.setRowHidden(row, not should_show)
+        else:
+            return str(value) if value is not None else ""
 
     def update_filter_inputs(self):
         # Clear existing filter inputs
@@ -494,7 +523,8 @@ class MainWindow(QMainWindow):
         search_text = self.search_input.text().lower()
         for row in range(self.company_table.rowCount()):
             should_show = False
-            for col in range(1, self.company_table.columnCount()):
+            for col in range(1,
+                             self.company_table.columnCount()):
                 item = self.company_table.item(row, col)
                 if item and search_text in item.text().lower():
                     should_show = True
@@ -502,14 +532,16 @@ class MainWindow(QMainWindow):
             self.company_table.setRowHidden(row, not should_show)
 
     def get_headers_for_collection(self, collection):
-        common_headers = ["ID", "Name", "Program"]
+        common_headers = ["ID", "Name", "Program", "LastAdded"]
         if collection == "Company_Install":
-            specific_headers = ["Igény", "Kiadott", "Felderítés", "Telepítés", "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+            specific_headers = [
+                "Igény", "Kiadott", "Felderítés", "Telepítés",
+                "Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"
+            ]
         else:  # Company_Demolition
             specific_headers = ["Bontás", "Felszerelés", "Bázis Leszerelés"]
 
-        # Add the new "LastAdded" field
-        return common_headers + ["LastAdded"] + specific_headers + ["Last Modified"]
+        return common_headers + specific_headers + ["Last Modified"]
 
     def update_filter_inputs(self):
         # Clear existing filter inputs
@@ -537,6 +569,10 @@ class MainWindow(QMainWindow):
         try:
             company_id = self.company_table.item(index.row(), 0).text()
             logging.debug(f"Company ID: {company_id}")
+
+            if not company_id:
+                raise ValueError("Company ID is empty")
+
             collection = self.get_current_collection()
             logging.debug(f"Collection: {collection}")
             company_data = self.firestore_service.get_company(collection, company_id)
@@ -549,19 +585,14 @@ class MainWindow(QMainWindow):
             else:
                 details_view = CompanyDetailsViewDemolition(self.firestore_service, company_id, self, company_data)
 
-            # Disconnect any existing connections to avoid multiple triggers
-            try:
-                details_view.companyUpdated.disconnect()
-            except TypeError:
-                pass  # No connections to disconnect
-
             details_view.companyUpdated.connect(self.load_companies)
-            logging.debug("Opening company details dialog")
             details_view.exec()
-            logging.debug("Company details dialog closed")
+        except ValueError as ve:
+            logging.error(f"Error opening company details: {str(ve)}")
+            QMessageBox.critical(self, "Error", f"Failed to open company details: {str(ve)}")
         except Exception as e:
-            logging.error(f"Error opening company details: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to open company details: {str(e)}")
+            logging.error(f"Unexpected error opening company details: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {str(e)}")
 
     def add_company(self):
         try:

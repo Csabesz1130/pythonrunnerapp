@@ -34,41 +34,29 @@ class FirestoreService:
             logging.error(f"Error fetching festivals: {e}", exc_info=True)
             return []
 
-    @retry.Retry(predicate=retry.if_exception_type(Exception))
     def get_companies(self, collection, festival=None):
-        cache_key = f"{collection}_{festival}"
-        if cache_key in self.company_cache:
-            logging.info(f"Returning cached companies for {cache_key}")
-            return self.company_cache[cache_key]
-
-        logging.info(f"Fetching companies from Firestore: {collection}, festival: {festival}")
+        logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
         try:
             companies_ref = self.db.collection(collection)
             if festival and festival != "All Festivals":
                 companies_ref = companies_ref.where('ProgramName', '==', festival)
 
-            companies = list(companies_ref.get())
+            companies = []
+            docs = list(companies_ref.stream())
 
-            if not companies:
-                logging.warning(f"No companies found in collection: {collection}, festival: {festival}")
-                return []
-
-            result = []
-            for company in companies:
+            for doc in docs:
                 try:
-                    company_data = company.to_dict()
-                    company_data['firestore_id'] = company.id
-                    sn_count = self.get_sn_count(collection, company.id)
-                    company_data['sn_count'] = sn_count
-                    result.append(company_data)
-                    logging.debug(f"Processed company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={sn_count}")
+                    company_data = doc.to_dict()
+                    company_data['firestore_id'] = doc.id
+                    company_data['sn_count'] = self.get_sn_count(collection, doc.id)
+                    companies.append(company_data)
+                    logging.debug(f"Processed company: ID={company_data.get('Id', 'N/A')}, Name={company_data.get('CompanyName', 'N/A')}, SN Count={company_data['sn_count']}")
                 except Exception as e:
-                    logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
+                    logging.error(f"Error processing company document {doc.id}: {e}", exc_info=True)
                     continue
 
-            self.company_cache[cache_key] = result
-            logging.info(f"Successfully processed {len(result)} companies")
-            return result
+            logging.info(f"Successfully processed {len(companies)} companies")
+            return companies
         except Exception as e:
             logging.error(f"Error fetching companies: {e}", exc_info=True)
             raise
@@ -76,7 +64,7 @@ class FirestoreService:
     def get_sn_count(self, collection, company_id):
         try:
             sn_collection = self.db.collection(collection).document(company_id).collection('SN')
-            return len(sn_collection.get())
+            return sn_collection.count().get()[0][0].value
         except Exception as e:
             logging.error(f"Error getting SN count for company {company_id}: {e}")
             return 0
