@@ -13,6 +13,7 @@ from pythonrunnerapp.src.company_details_view_install import CompanyDetailsViewI
 from pythonrunnerapp.src.company_details_view_demolition import CompanyDetailsViewDemolition
 from pythonrunnerapp.src.edit_field_dialog import EditFieldDialog
 from boolean_color_delegate import BooleanColorDelegate
+from sn_statistics_dashboard import SNStatisticsDashboard
 import logging
 
 class MainWindow(QMainWindow):
@@ -92,21 +93,33 @@ class MainWindow(QMainWindow):
             all_data = self.firestore_service.get_all_documents(collection)
             logging.info(f"Retrieved {len(all_data)} documents from {collection}")
 
-            self.source_model.add_column("SN Count", lambda company: len(self.firestore_service.get_sn_list(company['Id'])))
-
-            self.source_model.update_data(all_data, collection)
-
-            boolean_delegate = BooleanColorDelegate(self.table_view)
-            boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
-            for column_index, header in enumerate(self.source_model._headers):
-                if header in boolean_fields:
-                    self.table_view.setItemDelegateForColumn(column_index, boolean_delegate)
+            self.source_model.update_data(all_data)
+            logging.info(f"Model updated with {self.source_model.rowCount()} rows")
 
             self.table_view.resizeColumnsToContents()
-
+            self.table_view.reset()  # Force refresh of the view
+            logging.info("Models setup completed")
         except Exception as e:
             logging.error(f"Error setting up models: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to set up data models: {str(e)}")
+
+    def process_updates(self):
+        if not self.pending_updates:
+            return
+
+        logging.debug(f"Processing {len(self.pending_updates)} updates")
+        try:
+            for data, change_type in self.pending_updates:
+                if change_type == 'REMOVED':
+                    self.source_model.remove_item(data['Id'])
+                else:
+                    self.source_model.update_single_item(data)
+
+            self.pending_updates.clear()
+            self.table_view.reset()  # Force refresh of the view
+            logging.debug("Updates processed and view refreshed")
+        except Exception as e:
+            logging.error(f"Error processing updates: {e}", exc_info=True)
 
     def setup_listener(self):
         try:
@@ -122,31 +135,6 @@ class MainWindow(QMainWindow):
         logging.debug(f"Queuing {change_type} update for ID: {data.get('Id', 'Unknown ID')}")
         self.pending_updates.append((data, change_type))
 
-    def process_updates(self):
-        if not self.pending_updates:
-            return
-
-        batch_size = 100
-        logging.debug(f"Processing {len(self.pending_updates)} updates")
-        try:
-            self.source_model.beginResetModel()
-            while self.pending_updates:
-                batch = self.pending_updates[:batch_size]
-                self.pending_updates = self.pending_updates[batch_size:]
-
-                for data, change_type in batch:
-                    if change_type == 'REMOVED':
-                        self.source_model.remove_item(data['Id'])
-                    else:
-                        self.source_model.update_single_item(data)
-
-                QApplication.processEvents()
-
-            self.source_model.endResetModel()
-            self.proxy_model.invalidate()
-        except Exception as e:
-            logging.error(f"Error processing updates: {e}", exc_info=True)
-
     def setup_update_timer(self):
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.process_updates)
@@ -160,6 +148,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Error during search: {e}", exc_info=True)
             QMessageBox.warning(self, "Search Error", "An error occurred while searching. Please try again.")
+
+    def show_sn_dashboard(self):
+        dashboard = SNStatisticsDashboard(self.firestore_service)
+        dashboard.setWindowTitle("SN Statistics Dashboard")
+        dashboard.resize(800, 600)  # Set an initial size
+        dashboard.show()
 
     def open_company_details(self, index):
         try:

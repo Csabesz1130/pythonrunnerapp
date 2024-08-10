@@ -34,6 +34,14 @@ class FirestoreService:
             logging.error(f"Error fetching documents from {collection}: {e}")
             raise
 
+    def get_companies_paginated(self, collection, start, end):
+        try:
+            docs = self.db.collection(collection).order_by('CompanyName').offset(start).limit(end - start).get()
+            return [doc.to_dict() for doc in docs]
+        except Exception as e:
+            logging.error(f"Error fetching paginated companies: {e}")
+            return []
+
     @retry.Retry(predicate=retry.if_exception_type(Exception))
     def get_companies(self, collection, festival=None):
         logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
