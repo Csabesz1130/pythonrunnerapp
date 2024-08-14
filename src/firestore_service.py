@@ -8,19 +8,15 @@ from datetime import datetime
 
 class FirestoreService:
     def __init__(self, credentials_path=None):
-        if credentials_path is None:
-            credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-
-        if not credentials_path or not os.path.exists(credentials_path):
-            raise FileNotFoundError(f"Firebase credentials file not found at: {credentials_path}")
-
-        if not firebase_admin._apps:
-            cred = credentials.Certificate(credentials_path)
-            firebase_admin.initialize_app(cred)
-
-        self.db = firestore.Client()
-        self.last_update_time = firestore.SERVER_TIMESTAMP
-        logging.info("FirestoreService initialized successfully")
+        try:
+            if credentials_path:
+                self.db = firestore.Client.from_service_account_json(credentials_path)
+            else:
+                self.db = firestore.Client()
+            logging.info("Firestore client initialized successfully.")
+        except Exception as e:
+            logging.error(f"Failed to initialize Firestore client: {e}")
+            raise ValueError(f"Failed to initialize Firestore client. Error: {str(e)}")
 
     def get_all_documents(self, collection):
         try:
@@ -34,13 +30,31 @@ class FirestoreService:
             logging.error(f"Error fetching documents from {collection}: {e}")
             raise
 
-    def get_companies_paginated(self, collection, start, end):
+    @retry.Retry(predicate=retry.if_exception_type(Exception))
+    def get_companies_paginated(self, festival, start, end):
         try:
-            docs = self.db.collection(collection).order_by('CompanyName').offset(start).limit(end - start).get()
-            return [doc.to_dict() for doc in docs]
+            logging.info(f"Fetching companies for festival: {festival}, start: {start}, end: {end}")
+            query = self.db.collection('Company_Install').where('ProgramName', '==', festival)
+            query = query.order_by('CompanyName').offset(start).limit(end - start)
+            companies = query.get()
+            result = [{**doc.to_dict(), 'Id': doc.id} for doc in companies]
+            logging.info(f"Retrieved {len(result)} companies")
+            return result
         except Exception as e:
-            logging.error(f"Error fetching paginated companies: {e}")
-            return []
+            logging.error(f"Error fetching paginated companies: {e}", exc_info=True)
+            raise
+
+    @retry.Retry(predicate=retry.if_exception_type(Exception))
+    def get_total_companies(self, festival):
+        try:
+            logging.info(f"Getting total companies for festival: {festival}")
+            query = self.db.collection('Company_Install').where('ProgramName', '==', festival)
+            total = len(query.get())
+            logging.info(f"Total companies: {total}")
+            return total
+        except Exception as e:
+            logging.error(f"Error getting total companies: {e}", exc_info=True)
+            raise
 
     @retry.Retry(predicate=retry.if_exception_type(Exception))
     def get_companies(self, collection, festival=None):
@@ -161,14 +175,38 @@ class FirestoreService:
 
     def get_festivals(self):
         try:
+            logging.info("Fetching festivals")
             festivals = self.db.collection('Programs').get()
-            return [festival.to_dict().get('ProgramName', 'Unknown Festival') for festival in festivals]
+            result = [festival.to_dict().get('ProgramName', 'Unknown Festival') for festival in festivals]
+            logging.info(f"Retrieved {len(result)} festivals")
+            return result
         except Exception as e:
-            logging.error(f"Error fetching festivals: {e}")
+            logging.error(f"Error fetching festivals: {e}", exc_info=True)
             return []
 
     def generate_id(self):
         return self.db.collection('dummy').document().id
+
+    def update_or_create_company(self, collection, company_data):
+        try:
+            company_id = company_data['Id']
+            doc_ref = self.db.collection(collection).document(company_id)
+
+            # Check if the document exists
+            doc = doc_ref.get()
+            if doc.exists:
+                # Update existing document
+                doc_ref.update(company_data)
+                logging.info(f"Updated existing company with ID: {company_id}")
+            else:
+                # Create new document
+                doc_ref.set(company_data)
+                logging.info(f"Created new company with ID: {company_id}")
+
+            return True
+        except Exception as e:
+            logging.error(f"Error updating or creating company: {e}", exc_info=True)
+            raise
 
     def get_company_updates(self, collection, last_update_time):
         try:
@@ -176,15 +214,6 @@ class FirestoreService:
             return [{**doc.to_dict(), 'Id': doc.id} for doc in updates]
         except Exception as e:
             logging.error(f"Error fetching company updates: {e}")
-            raise
-
-    def get_companies_paginated(self, collection, start, end):
-        try:
-            query = self.db.collection(collection).order_by('CreatedAt').offset(start).limit(end - start)
-            docs = query.get()
-            return [{**doc.to_dict(), 'Id': doc.id} for doc in docs]
-        except Exception as e:
-            logging.error(f"Error fetching paginated companies: {e}")
             raise
 
     @property

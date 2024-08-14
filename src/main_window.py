@@ -1,20 +1,33 @@
+import csv
 import sys
 
-from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, QMessageBox, QApplication
+from PyQt6.QtGui import QKeySequence, QShortcut, QAction
+from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, \
+    QMessageBox, QApplication, QLabel, QSpinBox, QDialog, QComboBox, QFileDialog
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread
 
+from add_company_dialog import AddCompanyDialog
+from auto_complete_line_edit import AutoCompleteLineEdit
+from bulk_edit_dialog import BulkEditDialog
 from company_details_view import CompanyDetailsView
-#from pythonrunnerapp.src.dynamic_firestore_model import DynamicFirestoreModel
+from data_cache import DataCache
 from dynamic_firestore_model import DynamicFirestoreModel
+from festival_selection_dialog import FestivalSelectionDialog
+from firestore_service import FirestoreService
+from paginated_firestore_model import PaginatedFirestoreModel
 from pythonrunnerapp.src.dynamic_filter_proxy_model import DynamicFilterProxyModel
-#from src.firestore_listener import FirestoreListener
 from pythonrunnerapp.src.firestore_listener import FirestoreListener
 from pythonrunnerapp.src.company_details_view_install import CompanyDetailsViewInstall
 from pythonrunnerapp.src.company_details_view_demolition import CompanyDetailsViewDemolition
 from pythonrunnerapp.src.edit_field_dialog import EditFieldDialog
 from boolean_color_delegate import BooleanColorDelegate
 from sn_statistics_dashboard import SNStatisticsDashboard
+from add_company_dialog import AddCompanyDialog
+from telephely_importer import TelephalyImporter
 import logging
+
+from toggle_view import ToggleView
+
 
 class MainWindow(QMainWindow):
     COLUMN_NAMES = {
@@ -31,77 +44,299 @@ class MainWindow(QMainWindow):
         "4": "Hálózat"
     }
 
-    def __init__(self, firestore_service):
+    def __init__(self, firestore_service: FirestoreService):
         super().__init__()
         self.firestore_service = firestore_service
-        self.pending_updates = []
-        self.listener = None
+        self.current_festival = None
+        self.page_size = 100
+        self.current_page = 0
+        self.total_pages = 0
         self.setup_ui()
         self.setup_models()
-        self.setup_listener()
-        self.setup_update_timer()
+        self.select_initial_festival()
 
     def setup_ui(self):
         self.setWindowTitle("Company Management System")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1200, 800)
 
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        layout = QVBoxLayout(self.central_widget)
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
-        self.search_input = QLineEdit()
+        # Festival selection dropdown
+        festival_layout = QHBoxLayout()
+        festival_label = QLabel("Festival:")
+        self.festival_combo = QComboBox()
+        self.festival_combo.currentTextChanged.connect(self.change_festival)
+        festival_layout.addWidget(festival_label)
+        festival_layout.addWidget(self.festival_combo)
+        layout.addLayout(festival_layout)
+
+        # Search bar
+        self.search_input = AutoCompleteLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.textChanged.connect(self.on_search_changed)
         layout.addWidget(self.search_input)
 
-        self.table_view = QTableView()
-        self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.table_view.setSelectionMode(QTableView.SelectionMode.MultiSelection)
-        self.table_view.doubleClicked.connect(self.open_company_details)
-        layout.addWidget(self.table_view)
+        # Toggle View
+        self.toggle_view = ToggleView()
+        self.toggle_view.company_selected.connect(self.open_company_details)
+        layout.addWidget(self.toggle_view)
 
+        # Pagination controls
+        pagination_layout = QHBoxLayout()
+        self.prev_button = QPushButton("Previous")
+        self.prev_button.clicked.connect(self.previous_page)
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.next_page)
+        self.page_label = QLabel()
+        pagination_layout.addWidget(self.prev_button)
+        pagination_layout.addWidget(self.page_label)
+        pagination_layout.addWidget(self.next_button)
+        layout.addLayout(pagination_layout)
+
+        # Action buttons
         button_layout = QHBoxLayout()
-
-        self.add_button = QPushButton("Add Company")
-        self.add_button.clicked.connect(self.add_company)
-        button_layout.addWidget(self.add_button)
-
+        self.add_company_button = QPushButton("Add Company")
+        self.add_company_button.clicked.connect(self.add_company)
         self.bulk_edit_button = QPushButton("Bulk Edit")
         self.bulk_edit_button.clicked.connect(self.bulk_edit)
+        button_layout.addWidget(self.add_company_button)
         button_layout.addWidget(self.bulk_edit_button)
-
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self.refresh_data)
-        button_layout.addWidget(self.refresh_button)
-
         layout.addLayout(button_layout)
 
-        sys.excepthook = self.handle_exception
+        menubar = self.menuBar()
+        self.file_menu = menubar.addMenu('File')
+        self.edit_menu = menubar.addMenu('Edit')
+        self.view_menu = menubar.addMenu('View')
 
-    def handle_exception(self, exc_type, exc_value, exc_traceback):
-        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-        QMessageBox.critical(self, "Error", "An unexpected error occurred. Please check the log for details.")
+        # File menu actions
+        export_action = QAction('Export Data', self)
+        export_action.triggered.connect(self.export_data)
+        self.file_menu.addAction(export_action)
+
+        import_action = QAction('Import Company', self)
+        import_action.triggered.connect(self.import_company)
+        self.file_menu.addAction(import_action)
+
+        # Edit menu actions
+        undo_action = QAction('Undo', self)
+        undo_action.triggered.connect(self.undo_action)
+        self.edit_menu.addAction(undo_action)
+
+        redo_action = QAction('Redo', self)
+        redo_action.triggered.connect(self.redo_action)
+        self.edit_menu.addAction(redo_action)
+
+        # View menu actions
+        toggle_view_action = QAction('Toggle View', self)
+        toggle_view_action.triggered.connect(self.toggle_view.toggle_view)
+        self.view_menu.addAction(toggle_view_action)
+
+        # Keyboard shortcuts
+        QShortcut(QKeySequence("Ctrl+F"), self, self.focus_search)
+        QShortcut(QKeySequence("Ctrl+N"), self, self.add_company)
+        QShortcut(QKeySequence("Ctrl+E"), self, self.bulk_edit)
+
+    def setup_auto_refresh(self):
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.auto_refresh)
+        self.refresh_timer.start(30000)  # Refresh every 30 seconds
+
+    def auto_refresh(self):
+        logging.info("Auto-refreshing data")
+        self.load_page_data()
+
+    def import_company(self):
+        try:
+            if not self.current_festival:
+                QMessageBox.warning(self, "Warning", "Please select a festival before importing data.")
+                return
+
+            file_name, _ = QFileDialog.getOpenFileName(self, "Import Company Data", "", "Excel Files (*.xlsx *.xls);;All Files (*)")
+            if file_name:
+                importer = TelephalyImporter(self.firestore_service)
+                imported_count, error_count = importer.import_from_excel(file_name, self.current_festival, self)
+
+                if imported_count > 0:
+                    self.load_page_data()  # Refresh the view
+                    QMessageBox.information(self, "Import Complete",
+                                            f"Company data has been imported.\n"
+                                            f"Imported: {imported_count}\n"
+                                            f"Errors: {error_count}\n\n"
+                                            f"Please check the log for details on any errors.")
+                else:
+                    QMessageBox.warning(self, "Import Warning",
+                                        f"No data was imported.\n"
+                                        f"Errors: {error_count}\n\n"
+                                        f"Please check the log for details.")
+            else:
+                logging.info("Company data import cancelled by user")
+        except Exception as e:
+            logging.error(f"Error during Company data import: {e}", exc_info=True)
+            QMessageBox.critical(self, "Import Error", f"An unexpected error occurred: {str(e)}\n\nPlease check the log for details.")
+
+    def setup_models(self):
+        self.source_model = DynamicFirestoreModel()
+        self.proxy_model = DynamicFilterProxyModel()
+        self.proxy_model.setSourceModel(self.source_model)
+        self.toggle_view.set_model(self.proxy_model)
+
+    def on_festival_changed(self, festival):
+        self.current_festival = festival
+        self.current_page = 0
+        self.load_page_data()
+
+    def on_search_changed(self, text):
+        self.proxy_model.setFilterFixedString(text)
+
+    def setup_connections(self):
+        self.festival_combo.currentTextChanged.connect(self.on_festival_changed)
+        self.search_input.textChanged.connect(self.on_search_changed)
+        self.prev_button.clicked.connect(self.previous_page)
+        self.next_button.clicked.connect(self.next_page)
+        self.add_company_button.clicked.connect(self.add_company)
+        self.bulk_edit_button.clicked.connect(self.bulk_edit)
+
+    def select_initial_festival(self):
+        festivals = self.firestore_service.get_festivals()
+        self.festival_combo.addItems(festivals)
+        if festivals:
+            self.current_festival = festivals[0]
+            self.festival_combo.setCurrentText(self.current_festival)
+            self.load_page_data()
+
+    def focus_search(self):
+        self.search_input.setFocus()
+
+    def export_data(self):
+        try:
+            file_name, _ = QFileDialog.getSaveFileName(self, "Export Data", "", "CSV Files (*.csv);;All Files (*)")
+            if file_name:
+                # Implement the actual export logic here
+                # This is a placeholder implementation
+                data = self.get_current_data()
+                with open(file_name, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(data[0].keys())  # Write headers
+                    for row in data:
+                        writer.writerow(row.values())
+                QMessageBox.information(self, "Export", f"Data exported to {file_name}")
+                logging.info(f"Data exported to file: {file_name}")
+            else:
+                logging.info("Data export cancelled by user")
+        except Exception as e:
+            logging.error(f"Error during data export: {e}", exc_info=True)
+            QMessageBox.critical(self, "Export Error", f"Failed to export data: {str(e)}")
+
+    def get_current_data(self):
+        # This method should return the current data in the model
+        # Implement according to your data structure
+        data = []
+        for row in range(self.proxy_model.rowCount()):
+            row_data = {}
+            for column in range(self.proxy_model.columnCount()):
+                header = self.proxy_model.headerData(column, Qt.Orientation.Horizontal)
+                value = self.proxy_model.data(self.proxy_model.index(row, column))
+                row_data[header] = value
+            data.append(row_data)
+        return data
+
+    def undo_action(self):
+        # Implement undo functionality
+        QMessageBox.information(self, "Undo", "Undo functionality not yet implemented.")
+        logging.info("Undo action triggered")
+
+    def redo_action(self):
+        # Implement redo functionality
+        QMessageBox.information(self, "Redo", "Redo functionality not yet implemented.")
+        logging.info("Redo action triggered")
 
     def setup_models(self):
         try:
             self.source_model = DynamicFirestoreModel(self)
             self.proxy_model = DynamicFilterProxyModel(self)
             self.proxy_model.setSourceModel(self.source_model)
-            self.table_view.setModel(self.proxy_model)
+            self.toggle_view.set_model(self.proxy_model)
 
-            collection = "Company_Install"
-            all_data = self.firestore_service.get_all_documents(collection)
-            logging.info(f"Retrieved {len(all_data)} documents from {collection}")
+            self.load_page_data()
 
-            self.source_model.update_data(all_data)
-            logging.info(f"Model updated with {self.source_model.rowCount()} rows")
-
-            self.table_view.resizeColumnsToContents()
-            self.table_view.reset()  # Force refresh of the view
-            logging.info("Models setup completed")
+            logging.info("Models set up successfully")
         except Exception as e:
             logging.error(f"Error setting up models: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to set up data models: {str(e)}")
+
+    def load_page_data(self):
+        try:
+            start = self.current_page * self.page_size
+            end = start + self.page_size
+            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
+
+            if not data:
+                logging.warning(f"No data returned for page {self.current_page + 1}")
+                self.source_model.update_data([])
+                self.total_pages = 1
+                self.current_page = 0
+            else:
+                self.source_model.update_data(data)
+                total_companies = self.firestore_service.get_total_companies(self.current_festival)
+                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
+
+            self.update_pagination_controls()
+            logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")
+        except Exception as e:
+            logging.error(f"Error loading page data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load page data: {str(e)}")
+
+    def update_pagination_controls(self):
+        self.page_label.setText(f"Page {self.current_page + 1} of {self.total_pages}")
+        self.prev_button.setEnabled(self.current_page > 0)
+        self.next_button.setEnabled(self.current_page < self.total_pages - 1)
+
+    def previous_page(self):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.load_page_data()
+
+    def next_page(self):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.load_page_data()
+
+    def change_festival(self, festival):
+        self.current_festival = festival
+        self.current_page = 0
+        self.load_page_data()
+
+    @pyqtSlot(str)
+    def on_search_changed(self, text):
+        try:
+            self.proxy_model.setFilterFixedString(text)
+        except Exception as e:
+            logging.error(f"Error during search: {e}", exc_info=True)
+            QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
+
+    def add_company(self):
+        dialog = AddCompanyDialog(self.firestore_service, self)
+        dialog.companyAdded.connect(self.on_company_added)
+        dialog.exec()
+
+    def on_company_added(self, new_company):
+        self.model.add_item(new_company)
+        self.table_view.resizeColumnsToContents()
+
+    @pyqtSlot(int)
+    def go_to_page(self, page):
+        self.model.load_page(page - 1)
+        self.update_pagination_controls()
+
+    def exception_hook(exc_type, exc_value, exc_traceback):
+        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        QMessageBox.critical(None, "Error", "An unexpected error occurred. Please check the log for details.")
+
+    def handle_exception(self, exc_type, exc_value, exc_traceback):
+        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        QMessageBox.critical(self, "Error", "An unexpected error occurred. Please check the log for details.")
 
     def process_updates(self):
         if not self.pending_updates:
@@ -143,11 +378,24 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str)
     def on_search_changed(self, text):
         try:
-            logging.debug(f"Search text changed: {text}")
-            self.proxy_model.setFilterFixedString(text)
+            self.model.layoutAboutToBeChanged.emit()
+            for row in range(self.model.rowCount()):
+                should_hide = True
+                for column in range(self.model.columnCount()):
+                    item = self.model.index(row, column).data()
+                    if text.lower() in str(item).lower():
+                        should_hide = False
+                        break
+                self.table_view.setRowHidden(row, should_hide)
+            self.model.layoutChanged.emit()
         except Exception as e:
-            logging.error(f"Error during search: {e}", exc_info=True)
-            QMessageBox.warning(self, "Search Error", "An error occurred while searching. Please try again.")
+            logging.error(f"Error during search: {e}")
+            QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
+
+    @pyqtSlot()
+    def refresh_data(self):
+        self.cache.clear()
+        self.model.load_page(self.model.current_page)
 
     def show_sn_dashboard(self):
         dashboard = SNStatisticsDashboard(self.firestore_service)
@@ -170,61 +418,47 @@ class MainWindow(QMainWindow):
             collection = "Company_Install" if 'quantity' in company_data else "Company_Demolition"
 
             details_view = CompanyDetailsView(self.firestore_service, company_id, collection, self)
-            details_view.companyUpdated.connect(self.refresh_data)
+            details_view.companyUpdated.connect(self.load_page_data)  # Refresh after update
             details_view.exec()
         except Exception as e:
             logging.error(f"Error opening company details: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to open company details: {str(e)}")
 
-    def add_company(self):
-        try:
-            logging.debug("Adding new company")
-            new_company_data = {"Id": self.firestore_service.generate_id()}
-            details_view = CompanyDetailsViewInstall(self.firestore_service, None, self, new_company_data)
-            details_view.companyUpdated.connect(self.refresh_data)
-            details_view.exec()
-        except Exception as e:
-            logging.error(f"Error adding company: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to add company: {str(e)}")
-
     def bulk_edit(self):
-        selected_rows = self.table_view.selectionModel().selectedRows()
+        selected_rows = self.toggle_view.get_selected_rows()
         if not selected_rows:
-            QMessageBox.warning(self, "No Selection", "Please select rows to edit.")
+            QMessageBox.warning(self, "No Selection", "Please select companies to edit.")
             return
-
         try:
-            logging.debug(f"Bulk editing {len(selected_rows)} companies")
-            dialog = EditFieldDialog("Company_Install", self)
+            dialog = BulkEditDialog(self.proxy_model, selected_rows, self.firestore_service, self)
             if dialog.exec():
-                field, value = dialog.get_field_and_value()
-                self.apply_bulk_edit(field, value, selected_rows)
+                self.load_page_data()
+                self.toggle_view.clear_selection()
         except Exception as e:
-            logging.error(f"Error in bulk edit: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to perform bulk edit: {str(e)}")
+            logging.error(f"Error during bulk edit: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An error occurred during bulk edit: {str(e)}")
 
-    def process_updates(self):
-        if not self.pending_updates:
-            return
 
-        logging.debug(f"Processing {len(self.pending_updates)} updates")
-        try:
-            self.source_model.beginResetModel()
-            while self.pending_updates:
-                data, change_type = self.pending_updates.pop(0)
-                if change_type == 'REMOVED':
-                    self.source_model.remove_item(data['Id'])
-                else:
-                    self.source_model.update_single_item(data)
-            self.source_model.endResetModel()
-            self.proxy_model.invalidate()
-        except Exception as e:
-            logging.error(f"Error processing updates: {e}", exc_info=True)
+    @pyqtSlot()
+    def add_company(self):
+        dialog = AddCompanyDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                new_company = {
+                    "CompanyName": dialog.name_edit.text(),
+                    "ProgramName": dialog.program_edit.text(),
+                    # Add other default fields as necessary
+                }
+                # Add to Firestore
+                doc_ref = self.firestore_service.db.collection("Company_Install").add(new_company)
+                new_company["Id"] = doc_ref[1].id  # Assuming the ID is returned by Firestore
 
-    def setup_update_timer(self):
-        self.update_timer = QTimer(self)
-        self.update_timer.timeout.connect(self.process_updates)
-        self.update_timer.start(5000)  # Process updates every 5 seconds
+                # Add to model
+                self.model.add_item(new_company)
+                QMessageBox.information(self, "Success", "Company added successfully!")
+            except Exception as e:
+                logging.error(f"Error adding company: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to add company: {str(e)}")
 
     def apply_bulk_edit(self, field, value, selected_rows):
         success_count = 0
@@ -240,17 +474,9 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logging.error(f"Error updating company {company_id}: {e}", exc_info=True)
 
-        QMessageBox.information(self, "Bulk Edit Result", f"Successfully updated {success_count} out of {len(selected_rows)} companies.")
+        QMessageBox.information(self, "Bulk Edit Result",
+                                f"Successfully updated {success_count} out of {len(selected_rows)} companies.")
         self.refresh_data()
-
-    def refresh_data(self):
-        try:
-            logging.debug("Refreshing data")
-            all_data = self.firestore_service.get_all_documents("Company_Install")
-            self.source_model.update_data(all_data)
-        except Exception as e:
-            logging.error(f"Error refreshing data: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to refresh data: {str(e)}")
 
     def closeEvent(self, event):
         logging.debug("Closing main window")

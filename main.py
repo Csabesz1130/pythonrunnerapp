@@ -2,8 +2,8 @@ import os
 import sys
 import logging
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from src.main_window import MainWindow
-from src.firestore_service import FirestoreService
+from main_window import MainWindow
+from firestore_service import FirestoreService
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
