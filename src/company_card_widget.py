@@ -96,10 +96,17 @@ class CompanyCardWidget(QWidget):
         super().mousePressEvent(event)
 
     def toggle_selection(self):
-        self.is_selected = not self.is_selected
+        self.set_selected(not self.is_selected)
+
+    def set_selected(self, selected):
+        self.is_selected = selected
         self.setProperty("selected", self.is_selected)
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
         self.selection_changed.emit(self.is_selected)
-        self.clicked.emit(self.company_data)
+        if self.is_selected:
+            self.clicked.emit(self.company_data)
+
+    def get_company_data(self):
+        return self.company_data

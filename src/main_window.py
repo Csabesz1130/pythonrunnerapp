@@ -1,7 +1,7 @@
 import csv
 import sys
 
-from PyQt6.QtGui import QKeySequence, QShortcut, QAction
+from PyQt6.QtGui import QKeySequence, QShortcut, QAction, QFont
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, \
     QMessageBox, QApplication, QLabel, QSpinBox, QDialog, QComboBox, QFileDialog
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread
@@ -57,31 +57,33 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self):
         self.setWindowTitle("Company Management System")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1000, 600)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        # Festival selection dropdown
-        festival_layout = QHBoxLayout()
-        festival_label = QLabel("Festival:")
+        # Top controls
+        top_layout = QHBoxLayout()
         self.festival_combo = QComboBox()
+        self.festival_combo.addItems(self.firestore_service.get_festivals())
         self.festival_combo.currentTextChanged.connect(self.change_festival)
-        festival_layout.addWidget(festival_label)
-        festival_layout.addWidget(self.festival_combo)
-        layout.addLayout(festival_layout)
+        top_layout.addWidget(self.festival_combo)
 
-        # Search bar
-        self.search_input = AutoCompleteLineEdit()
+        self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.textChanged.connect(self.on_search_changed)
-        layout.addWidget(self.search_input)
+        top_layout.addWidget(self.search_input)
 
-        # Toggle View
-        self.toggle_view = ToggleView()
-        self.toggle_view.company_selected.connect(self.open_company_details)
-        layout.addWidget(self.toggle_view)
+        self.toggle_view_button = QPushButton("Toggle View")
+        self.toggle_view_button.clicked.connect(self.toggle_view)
+        top_layout.addWidget(self.toggle_view_button)
+
+        main_layout.addLayout(top_layout)
+
+        # ToggleView
+        self.toggle_view = ToggleView(self.firestore_service)
+        main_layout.addWidget(self.toggle_view)
 
         # Pagination controls
         pagination_layout = QHBoxLayout()
@@ -93,7 +95,7 @@ class MainWindow(QMainWindow):
         pagination_layout.addWidget(self.prev_button)
         pagination_layout.addWidget(self.page_label)
         pagination_layout.addWidget(self.next_button)
-        layout.addLayout(pagination_layout)
+        main_layout.addLayout(pagination_layout)
 
         # Action buttons
         button_layout = QHBoxLayout()
@@ -103,40 +105,40 @@ class MainWindow(QMainWindow):
         self.bulk_edit_button.clicked.connect(self.bulk_edit)
         button_layout.addWidget(self.add_company_button)
         button_layout.addWidget(self.bulk_edit_button)
-        layout.addLayout(button_layout)
+        main_layout.addLayout(button_layout)
 
-        menubar = self.menuBar()
-        self.file_menu = menubar.addMenu('File')
-        self.edit_menu = menubar.addMenu('Edit')
-        self.view_menu = menubar.addMenu('View')
+        logging.info("UI setup completed")
 
-        # File menu actions
-        export_action = QAction('Export Data', self)
-        export_action.triggered.connect(self.export_data)
-        self.file_menu.addAction(export_action)
+    def setup_models(self):
+        self.source_model = DynamicFirestoreModel()
+        self.proxy_model = DynamicFilterProxyModel()
+        self.proxy_model.setSourceModel(self.source_model)
+        self.toggle_view.set_model(self.proxy_model)
 
-        import_action = QAction('Import Company', self)
-        import_action.triggered.connect(self.import_company)
-        self.file_menu.addAction(import_action)
+    def load_data(self):
+        if not self.current_festival:
+            return
 
-        # Edit menu actions
-        undo_action = QAction('Undo', self)
-        undo_action.triggered.connect(self.undo_action)
-        self.edit_menu.addAction(undo_action)
+        try:
+            start = self.current_page * self.page_size
+            end = start + self.page_size
+            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
 
-        redo_action = QAction('Redo', self)
-        redo_action.triggered.connect(self.redo_action)
-        self.edit_menu.addAction(redo_action)
+            if not data:
+                logging.warning(f"No data returned for page {self.current_page + 1}")
+                self.source_model.update_data([])
+                self.total_pages = 1
+                self.current_page = 0
+            else:
+                self.source_model.update_data(data)
+                total_companies = self.firestore_service.get_total_companies(self.current_festival)
+                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
 
-        # View menu actions
-        toggle_view_action = QAction('Toggle View', self)
-        toggle_view_action.triggered.connect(self.toggle_view.toggle_view)
-        self.view_menu.addAction(toggle_view_action)
-
-        # Keyboard shortcuts
-        QShortcut(QKeySequence("Ctrl+F"), self, self.focus_search)
-        QShortcut(QKeySequence("Ctrl+N"), self, self.add_company)
-        QShortcut(QKeySequence("Ctrl+E"), self, self.bulk_edit)
+            self.update_pagination_controls()
+            logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")
+        except Exception as e:
+            logging.error(f"Error loading page data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load page data: {str(e)}")
 
     def setup_auto_refresh(self):
         self.refresh_timer = QTimer(self)
@@ -146,6 +148,9 @@ class MainWindow(QMainWindow):
     def auto_refresh(self):
         logging.info("Auto-refreshing data")
         self.load_page_data()
+
+    def toggle_view(self):
+        self.toggle_view.toggle_view()
 
     def import_company(self):
         try:
@@ -182,6 +187,13 @@ class MainWindow(QMainWindow):
         self.proxy_model.setSourceModel(self.source_model)
         self.toggle_view.set_model(self.proxy_model)
 
+    def prompt_for_festival(self):
+        festivals = self.firestore_service.get_festivals()
+        self.festival_combo.addItems(festivals)
+        if festivals:
+            self.festival_combo.setCurrentIndex(0)
+            self.on_festival_changed(festivals[0])
+
     def on_festival_changed(self, festival):
         self.current_festival = festival
         self.current_page = 0
@@ -197,14 +209,39 @@ class MainWindow(QMainWindow):
         self.next_button.clicked.connect(self.next_page)
         self.add_company_button.clicked.connect(self.add_company)
         self.bulk_edit_button.clicked.connect(self.bulk_edit)
+        self.festival_combo.currentTextChanged.connect(self.on_festival_changed)
 
     def select_initial_festival(self):
-        festivals = self.firestore_service.get_festivals()
-        self.festival_combo.addItems(festivals)
-        if festivals:
-            self.current_festival = festivals[0]
-            self.festival_combo.setCurrentText(self.current_festival)
+        try:
+            logging.info("Selecting initial festival")
+            festivals = self.firestore_service.get_festivals()
+            if not festivals:
+                logging.error("No festivals retrieved")
+                QMessageBox.critical(self, "Error", "Unable to retrieve festivals. Please check your connection and try again.")
+                return
+
+            dialog = FestivalSelectionDialog(festivals, self)
+            if dialog.exec():
+                selected_festival = dialog.get_selected_festival()
+                logging.info(f"Initial festival selected: {selected_festival}")
+                self.current_festival = selected_festival
+                self.festival_combo.setCurrentText(selected_festival)
+                QTimer.singleShot(100, self.load_initial_data)
+            else:
+                logging.warning("No festival selected, closing application")
+                self.close()
+        except Exception as e:
+            logging.error(f"Error in select_initial_festival: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {str(e)}")
+
+    def load_initial_data(self):
+        try:
+            logging.info(f"Loading initial data for festival: {self.current_festival}")
             self.load_page_data()
+            self.update_pagination_controls()
+        except Exception as e:
+            logging.error(f"Error in load_initial_data: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load initial data: {str(e)}")
 
     def focus_search(self):
         self.search_input.setFocus()
@@ -252,21 +289,17 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Redo", "Redo functionality not yet implemented.")
         logging.info("Redo action triggered")
 
-    def setup_models(self):
-        try:
-            self.source_model = DynamicFirestoreModel(self)
-            self.proxy_model = DynamicFilterProxyModel(self)
-            self.proxy_model.setSourceModel(self.source_model)
-            self.toggle_view.set_model(self.proxy_model)
-
-            self.load_page_data()
-
-            logging.info("Models set up successfully")
-        except Exception as e:
-            logging.error(f"Error setting up models: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to set up data models: {str(e)}")
+    def load_festivals(self):
+        festivals = self.firestore_service.get_festivals()
+        self.festival_combo.clear()
+        self.festival_combo.addItems(festivals)
+        if festivals:
+            self.festival_combo.setCurrentIndex(0)
 
     def load_page_data(self):
+        if not self.current_festival:
+            return
+
         try:
             start = self.current_page * self.page_size
             end = start + self.page_size
@@ -304,9 +337,11 @@ class MainWindow(QMainWindow):
             self.load_page_data()
 
     def change_festival(self, festival):
+        logging.info(f"Changing festival to: {festival}")
         self.current_festival = festival
         self.current_page = 0
         self.load_page_data()
+        self.update_pagination_controls()
 
     @pyqtSlot(str)
     def on_search_changed(self, text):

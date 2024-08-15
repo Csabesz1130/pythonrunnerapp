@@ -1,7 +1,8 @@
-from PyQt6.QtGui import QDoubleValidator, QIntValidator
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox,
-                             QCheckBox, QPushButton, QTextEdit, QMessageBox, QHBoxLayout, QLabel, QListWidget)
+                             QCheckBox, QPushButton, QTextEdit, QMessageBox, QLabel,
+                             QListWidget, QHBoxLayout, QInputDialog)
 from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QIntValidator
 import logging
 
 class CompanyDetailsView(QDialog):
@@ -14,114 +15,87 @@ class CompanyDetailsView(QDialog):
         self.collection = collection
         self.company_data = {}
         self.fields = {}
-        self.field_mapping = self.get_field_mapping(collection)
         self.setup_ui()
         self.load_company_data()
 
-    def get_field_mapping(self, collection):
-        # This should be the same as in DynamicFirestoreModel
-        common_fields = {
-            "Id": "ID",
-            "CompanyName": "Name",
-            "ProgramName": "Program",
-            "LastAdded": "LastAdded",
-            "LastModified": "Last Modified"
-        }
-
-        if collection == "Company_Install":
-            specific_fields = {
-                "quantity": "Igény",
-                "SN": "Kiadott",
-                "1": "Felderítés",
-                "2": "Telepítés",
-                "3": "Elosztó",
-                "4": "Áram",
-                "5": "Hálózat",
-                "6": "PTG",
-                "7": "Szoftver",
-                "8": "Param",
-                "9": "Helyszín",
-            }
-        elif collection == "Company_Demolition":
-            specific_fields = {
-                "1": "Bontás",
-                "2": "Felszerelés",
-                "3": "Bázis Leszerelés",
-            }
-        else:
-            logging.warning(f"Unknown collection: {collection}")
-            specific_fields = {}
-
-        return {**common_fields, **specific_fields}
-
     def setup_ui(self):
         self.setWindowTitle("Company Details")
+        self.setMinimumSize(600, 400)
         layout = QVBoxLayout(self)
-        self.form_layout = QFormLayout()
-        layout.addLayout(self.form_layout)
 
-        self.save_button = QPushButton("Save")
-        self.save_button.clicked.connect(self.save_company)
-        layout.addWidget(self.save_button)
-        # Add SN display
-        self.sn_list_widget = QListWidget()
-        self.layout().addWidget(QLabel("SNs/DiDs:"))
-        self.layout().addWidget(self.sn_list_widget)
+        # Company Information
+        form_layout = QFormLayout()
+        self.fields['CompanyName'] = QLineEdit()
+        form_layout.addRow("Company Name:", self.fields['CompanyName'])
 
-        # Add SN management buttons
+        self.fields['ProgramName'] = QComboBox()
+        self.populate_programs()
+        form_layout.addRow("Program:", self.fields['ProgramName'])
+
+        self.fields['quantity'] = QLineEdit()
+        self.fields['quantity'].setValidator(QIntValidator())
+        form_layout.addRow("Quantity:", self.fields['quantity'])
+
+        # Status Fields
+        self.fields['felderites'] = QComboBox()
+        self.fields['felderites'].addItems(["TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
+        form_layout.addRow("Felderítés:", self.fields['felderites'])
+
+        self.fields['telepites'] = QComboBox()
+        self.fields['telepites'].addItems(["KIADVA", "KIHELYEZESRE_VAR", "KIRAKVA", "HELYSZINEN_TESZTELVE", "STATUSZ_NELKUL"])
+        form_layout.addRow("Telepítés:", self.fields['telepites'])
+
+        # Boolean Fields
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        for field in boolean_fields:
+            self.fields[field] = QCheckBox()
+            form_layout.addRow(f"{field}:", self.fields[field])
+
+        layout.addLayout(form_layout)
+
+        # SN List
+        sn_layout = QVBoxLayout()
+        sn_layout.addWidget(QLabel("SN List:"))
+        self.sn_list = QListWidget()
+        sn_layout.addWidget(self.sn_list)
+
         sn_button_layout = QHBoxLayout()
         self.add_sn_button = QPushButton("Add SN")
         self.remove_sn_button = QPushButton("Remove SN")
-        self.edit_sn_button = QPushButton("Edit SN")
         sn_button_layout.addWidget(self.add_sn_button)
         sn_button_layout.addWidget(self.remove_sn_button)
-        sn_button_layout.addWidget(self.edit_sn_button)
-        self.layout().addLayout(sn_button_layout)
+        sn_layout.addLayout(sn_button_layout)
+
+        layout.addLayout(sn_layout)
+
+        # Comments
+        layout.addWidget(QLabel("Comments:"))
+        self.comments_text = QTextEdit()
+        self.comments_text.setReadOnly(True)
+        layout.addWidget(self.comments_text)
+
+        # Save Button
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save_company)
+        layout.addWidget(self.save_button)
 
         # Connect SN management buttons
         self.add_sn_button.clicked.connect(self.add_sn)
         self.remove_sn_button.clicked.connect(self.remove_sn)
-        self.edit_sn_button.clicked.connect(self.edit_sn)
 
-    def create_dynamic_fields(self):
-        for key, value in self.company_data.items():
-            field_name = self.field_mapping.get(key, key)
-
-            if key in ['Id', 'CreatedAt', 'LastModified', 'LastAdded']:
-                field = QLineEdit()
-                field.setReadOnly(True)
-            elif isinstance(value, bool):
-                field = QCheckBox()
-            elif isinstance(value, (int, float)):
-                field = QLineEdit()
-                field.setValidator(QDoubleValidator() if isinstance(value, float) else QIntValidator())
-            elif key in ['1', '2']:  # Assuming these are combo box fields
-                field = QComboBox()
-                field.addItems(["", "TELEPÍTHETŐ", "KIRAKHATÓ", "NEM KIRAKHATÓ"])
-            else:
-                field = QLineEdit()
-
-            self.fields[key] = field
-            self.form_layout.addRow(field_name, field)
-
-    def populate_fields(self):
-        for key, field in self.fields.items():
-            value = self.company_data.get(key, '')
-            if isinstance(field, QLineEdit):
-                field.setText(str(value))
-            elif isinstance(field, QCheckBox):
-                field.setChecked(bool(value))
-            elif isinstance(field, QComboBox):
-                index = field.findText(str(value))
-                if index >= 0:
-                    field.setCurrentIndex(index)
+    def populate_programs(self):
+        try:
+            programs = self.firestore_service.get_programs()
+            self.fields['ProgramName'].addItems(programs)
+        except Exception as e:
+            logging.error(f"Error populating programs: {e}")
+            QMessageBox.warning(self, "Warning", "Failed to load programs. Some data may be missing.")
 
     def load_company_data(self):
         if self.company_id:
             try:
-                self.company_data = self.firestore_service.get_company(self.collection, self.company_id)
+                self.company_data = self.firestore_service.get_company_details(self.company_id)
                 if self.company_data:
-                    self.create_dynamic_fields()
                     self.populate_fields()
                 else:
                     QMessageBox.warning(self, "Not Found", f"Company with ID {self.company_id} not found.")
@@ -129,15 +103,41 @@ class CompanyDetailsView(QDialog):
                 logging.error(f"Error loading company data: {e}", exc_info=True)
                 QMessageBox.critical(self, "Error", f"Failed to load company data: {str(e)}")
 
+    def populate_fields(self):
+        self.fields['CompanyName'].setText(self.company_data.get('CompanyName', ''))
+        self.fields['ProgramName'].setCurrentText(self.company_data.get('ProgramName', ''))
+        self.fields['quantity'].setText(str(self.company_data.get('quantity', '')))
+        self.fields['felderites'].setCurrentText(self.company_data.get('felderites', ''))
+        self.fields['telepites'].setCurrentText(self.company_data.get('telepites', ''))
+
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        for field in boolean_fields:
+            self.fields[field].setChecked(self.company_data.get(field.lower(), False))
+
+        # Populate SN List
+        self.sn_list.clear()
+        self.sn_list.addItems(self.company_data.get('SN', []))
+
+        # Populate Comments
+        self.comments_text.clear()
+        for comment in self.company_data.get('Comments', []):
+            self.comments_text.append(f"{comment['timestamp']}: {comment['comment']}")
+
     def save_company(self):
-        updated_data = {}
-        for key, field in self.fields.items():
-            if isinstance(field, QLineEdit):
-                updated_data[key] = field.text()
-            elif isinstance(field, QCheckBox):
-                updated_data[key] = field.isChecked()
-            elif isinstance(field, QComboBox):
-                updated_data[key] = field.currentText()
+        updated_data = {
+            'CompanyName': self.fields['CompanyName'].text(),
+            'ProgramName': self.fields['ProgramName'].currentText(),
+            'quantity': int(self.fields['quantity'].text()) if self.fields['quantity'].text() else None,
+            'felderites': self.fields['felderites'].currentText(),
+            'telepites': self.fields['telepites'].currentText(),
+        }
+
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        for field in boolean_fields:
+            updated_data[field.lower()] = self.fields[field].isChecked()
+
+        # Get SN list
+        updated_data['SN'] = [self.sn_list.item(i).text() for i in range(self.sn_list.count())]
 
         try:
             if self.company_id:
@@ -151,3 +151,15 @@ class CompanyDetailsView(QDialog):
         except Exception as e:
             logging.error(f"Error saving company data: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to save company data: {str(e)}")
+
+    def add_sn(self):
+        sn, ok = QInputDialog.getText(self, "Add SN", "Enter new SN:")
+        if ok and sn:
+            self.sn_list.addItem(sn)
+
+    def remove_sn(self):
+        current_item = self.sn_list.currentItem()
+        if current_item:
+            self.sn_list.takeItem(self.sn_list.row(current_item))
+        else:
+            QMessageBox.warning(self, "No Selection", "Please select an SN to remove.")

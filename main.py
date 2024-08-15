@@ -17,6 +17,10 @@ os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = CREDENTIALS_PATH
 # Log the current value of the environment variable
 logging.debug(f"GOOGLE_APPLICATION_CREDENTIALS: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')}")
 
+def exception_hook(exctype, value, traceback):
+    logging.error("Uncaught exception", exc_info=(exctype, value, traceback))
+    sys.__excepthook__(exctype, value, traceback)
+
 def main():
     app = QApplication(sys.argv)
 
@@ -38,4 +42,5 @@ def main():
         QMessageBox.critical(None, "Unexpected Error", f"An unexpected error occurred: {str(e)}")
 
 if __name__ == "__main__":
+    sys.excepthook = exception_hook
     main()

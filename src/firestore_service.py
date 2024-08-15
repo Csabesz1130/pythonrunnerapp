@@ -57,31 +57,43 @@ class FirestoreService:
             raise
 
     @retry.Retry(predicate=retry.if_exception_type(Exception))
-    def get_companies(self, collection, festival=None):
-        logging.info(f"Fetching companies from collection: {collection}, festival: {festival}")
+    def get_company_details(self, company_id):
         try:
-            query = self.db.collection(collection)
-            if festival and festival != "All Festivals":
-                query = query.where('ProgramName', '==', festival)
+            logging.info(f"Fetching details for company: {company_id}")
+            doc_ref = self.db.collection('Company_Install').document(company_id)
+            doc = doc_ref.get()
+            if not doc.exists:
+                logging.warning(f"Company {company_id} not found")
+                return None
+            company_data = doc.to_dict()
+            company_data['Id'] = doc.id
 
-            companies = list(query.get())
+            # Fetch SN numbers
+            sn_collection = doc_ref.collection('SN')
+            sn_docs = sn_collection.get()
+            company_data['SN'] = [sn_doc.get('SN') for sn_doc in sn_docs if sn_doc.get('SN')]
 
-            result = []
-            for company in companies:
-                try:
-                    company_data = company.to_dict()
-                    company_data['Id'] = company.id
-                    sn_count = self.get_sn_count(collection, company.id)
-                    company_data['sn_count'] = sn_count
-                    result.append(company_data)
-                except Exception as e:
-                    logging.error(f"Error processing company document {company.id}: {e}", exc_info=True)
+            # Fetch Comments
+            comments_collection = doc_ref.collection('Comments')
+            comment_docs = comments_collection.order_by('Timestamp', direction=firestore.Query.DESCENDING).get()
+            company_data['Comments'] = [{
+                'comment': comment_doc.get('Comment'),
+                'timestamp': comment_doc.get('Timestamp')
+            } for comment_doc in comment_docs if comment_doc.get('Comment') and comment_doc.get('Timestamp')]
 
-            logging.info(f"Successfully processed {len(result)} companies")
-            return result
+            return company_data
         except Exception as e:
-            logging.error(f"Error fetching companies: {e}", exc_info=True)
+            logging.error(f"Error fetching company details: {e}", exc_info=True)
             raise
+
+    def get_sn_numbers(self, company_id):
+        try:
+            sn_collection = self.db.collection('Company_Install').document(company_id).collection('SN')
+            sn_docs = sn_collection.get()
+            return [doc.get('SN') for doc in sn_docs if doc.get('SN')]
+        except Exception as e:
+            logging.error(f"Error fetching SN numbers for company {company_id}: {e}", exc_info=True)
+            return []
 
     def get_company(self, collection, company_id):
         try:
