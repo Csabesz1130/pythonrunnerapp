@@ -1,7 +1,7 @@
 import csv
 import sys
 
-from PyQt6.QtGui import QKeySequence, QShortcut, QAction, QFont
+from PyQt6.QtGui import QKeySequence, QShortcut, QAction, QFont, QUndoStack
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, \
     QMessageBox, QApplication, QLabel, QSpinBox, QDialog, QComboBox, QFileDialog
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
     def __init__(self, firestore_service: FirestoreService):
         super().__init__()
         self.firestore_service = firestore_service
+        self.undo_stack = QUndoStack(self)
         self.current_festival = None
         self.page_size = 100
         self.current_page = 0
@@ -58,6 +59,9 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         self.setWindowTitle("Company Management System")
         self.setGeometry(100, 100, 1000, 600)
+
+        # Menu Bar
+        self.setup_menu_bar()
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -108,6 +112,16 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(button_layout)
 
         logging.info("UI setup completed")
+
+    def toggle_view_action(self):
+        # This method will be called when the "Toggle View" menu item is clicked
+        if hasattr(self, 'toggle_view'):
+            self.toggle_view.toggle_view()
+        else:
+            logging.warning("toggle_view attribute not found")
+
+    def show_about(self):
+        QMessageBox.about(self, "About", "Company Management System\nVersion 1.0\n\nDeveloped by Your Name/Company")
 
     def setup_models(self):
         self.source_model = DynamicFirestoreModel()
@@ -187,6 +201,32 @@ class MainWindow(QMainWindow):
         self.proxy_model.setSourceModel(self.source_model)
         self.toggle_view.set_model(self.proxy_model)
 
+    def setup_menu_bar(self):
+        menubar = self.menuBar()
+        self.file_menu = menubar.addMenu("File")
+        self.edit_menu = menubar.addMenu("Edit")
+        self.view_menu = menubar.addMenu("View")
+        self.help_menu = menubar.addMenu("Help")
+
+        # File menu actions
+        self.file_menu.addAction("Export Data", self.export_data)
+        self.file_menu.addAction("Import Data", self.import_company)
+        self.file_menu.addAction("Exit", self.close)
+
+        # Edit menu actions
+        undo_action = self.undo_stack.createUndoAction(self, "Undo")
+        redo_action = self.undo_stack.createRedoAction(self, "Redo")
+        self.edit_menu.addAction(undo_action)
+        self.edit_menu.addAction(redo_action)
+        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+
+        # View menu actions
+        self.view_menu.addAction("Toggle View", self.toggle_view_action)
+
+        # Help menu actions
+        self.help_menu.addAction("About", self.show_about)
+
     def prompt_for_festival(self):
         festivals = self.firestore_service.get_festivals()
         self.festival_combo.addItems(festivals)
@@ -199,8 +239,13 @@ class MainWindow(QMainWindow):
         self.current_page = 0
         self.load_page_data()
 
+    @pyqtSlot(str)
     def on_search_changed(self, text):
-        self.proxy_model.setFilterFixedString(text)
+        try:
+            self.proxy_model.setFilterFixedString(text)
+        except Exception as e:
+            logging.error(f"Error during search: {e}", exc_info=True)
+            QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
 
     def setup_connections(self):
         self.festival_combo.currentTextChanged.connect(self.on_festival_changed)
@@ -343,14 +388,6 @@ class MainWindow(QMainWindow):
         self.load_page_data()
         self.update_pagination_controls()
 
-    @pyqtSlot(str)
-    def on_search_changed(self, text):
-        try:
-            self.proxy_model.setFilterFixedString(text)
-        except Exception as e:
-            logging.error(f"Error during search: {e}", exc_info=True)
-            QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
-
     def add_company(self):
         dialog = AddCompanyDialog(self.firestore_service, self)
         dialog.companyAdded.connect(self.on_company_added)
@@ -409,23 +446,6 @@ class MainWindow(QMainWindow):
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.process_updates)
         self.update_timer.start(5000)  # Process updates every 5 seconds
-
-    @pyqtSlot(str)
-    def on_search_changed(self, text):
-        try:
-            self.model.layoutAboutToBeChanged.emit()
-            for row in range(self.model.rowCount()):
-                should_hide = True
-                for column in range(self.model.columnCount()):
-                    item = self.model.index(row, column).data()
-                    if text.lower() in str(item).lower():
-                        should_hide = False
-                        break
-                self.table_view.setRowHidden(row, should_hide)
-            self.model.layoutChanged.emit()
-        except Exception as e:
-            logging.error(f"Error during search: {e}")
-            QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
 
     @pyqtSlot()
     def refresh_data(self):

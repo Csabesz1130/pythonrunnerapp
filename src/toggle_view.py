@@ -137,7 +137,7 @@ class ToggleView(QStackedWidget):
         for i in reversed(range(self.card_layout.count())):
             self.card_layout.itemAt(i).widget().setParent(None)
 
-        # Add new cards in a grid layout
+        # Add new cards
         model = self.table_view.model()
         row, col = 0, 0
         for row_index in range(model.rowCount()):
@@ -145,7 +145,6 @@ class ToggleView(QStackedWidget):
             if company_data:
                 card = CompanyCardWidget(company_data)
                 card.clicked.connect(self.on_card_clicked)
-                card.selection_changed.connect(self.on_card_selection_changed)
                 self.card_layout.addWidget(card, row, col)
                 col += 1
                 if col == 3:  # Adjust the number of columns as needed
