@@ -199,6 +199,14 @@ class FirestoreService:
     def generate_id(self):
         return self.db.collection('dummy').document().id
 
+    def get_companies(self, collection, festival):
+        try:
+            companies = self.db.collection(collection).where('ProgramName', '==', festival).get()
+            return [{**doc.to_dict(), 'Id': doc.id} for doc in companies]
+        except Exception as e:
+            logging.error(f"Error fetching companies from {collection}: {e}", exc_info=True)
+            raise
+
     def update_or_create_company(self, collection, company_data):
         try:
             company_id = company_data['Id']

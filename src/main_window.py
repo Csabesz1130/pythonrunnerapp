@@ -3,8 +3,8 @@ import sys
 
 from PyQt6.QtGui import QKeySequence, QShortcut, QAction, QFont, QUndoStack
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QTableView, QLineEdit, QWidget, QPushButton, QHBoxLayout, \
-    QMessageBox, QApplication, QLabel, QSpinBox, QDialog, QComboBox, QFileDialog
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread
+    QMessageBox, QApplication, QLabel, QSpinBox, QDialog, QComboBox, QFileDialog, QRadioButton
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QThread, QSortFilterProxyModel
 
 from add_company_dialog import AddCompanyDialog
 from auto_complete_line_edit import AutoCompleteLineEdit
@@ -57,11 +57,8 @@ class MainWindow(QMainWindow):
         self.select_initial_festival()
 
     def setup_ui(self):
-        self.setWindowTitle("Company Management System")
-        self.setGeometry(100, 100, 1000, 600)
-
-        # Menu Bar
-        self.setup_menu_bar()
+        self.setWindowTitle("Festival Company Management")
+        self.setGeometry(100, 100, 1200, 800)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -69,19 +66,24 @@ class MainWindow(QMainWindow):
 
         # Top controls
         top_layout = QHBoxLayout()
+
         self.festival_combo = QComboBox()
         self.festival_combo.addItems(self.firestore_service.get_festivals())
         self.festival_combo.currentTextChanged.connect(self.change_festival)
         top_layout.addWidget(self.festival_combo)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search...")
+        self.search_input.setPlaceholderText("Search companies...")
         self.search_input.textChanged.connect(self.on_search_changed)
         top_layout.addWidget(self.search_input)
 
-        self.toggle_view_button = QPushButton("Toggle View")
-        self.toggle_view_button.clicked.connect(self.toggle_view)
-        top_layout.addWidget(self.toggle_view_button)
+        self.company_install_radio = QRadioButton("Company_Install")
+        self.company_demolition_radio = QRadioButton("Company_Demolition")
+        self.company_install_radio.setChecked(True)
+        self.company_install_radio.toggled.connect(self.on_collection_changed)
+        self.company_demolition_radio.toggled.connect(self.on_collection_changed)
+        top_layout.addWidget(self.company_install_radio)
+        top_layout.addWidget(self.company_demolition_radio)
 
         main_layout.addLayout(top_layout)
 
@@ -111,6 +113,9 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.bulk_edit_button)
         main_layout.addLayout(button_layout)
 
+        # Menu Bar
+        self.setup_menu_bar()
+
         logging.info("UI setup completed")
 
     def toggle_view_action(self):
@@ -120,12 +125,34 @@ class MainWindow(QMainWindow):
         else:
             logging.warning("toggle_view attribute not found")
 
+    def on_collection_changed(self):
+        if self.company_install_radio.isChecked():
+            self.current_collection = "Company_Install"
+        else:
+            self.current_collection = "Company_Demolition"
+        self.load_data()
+
+    def filter_column(self, column):
+        index = self.table_view.model().index(self.filter_row, column)
+        filter_text = self.table_view.model().data(index, Qt.ItemDataRole.EditRole)
+
+        if isinstance(self.table_view.model(), QSortFilterProxyModel):
+            source_model = self.table_view.model().sourceModel()
+        else:
+            source_model = self.table_view.model()
+
+        if isinstance(source_model, DynamicFirestoreModel):
+            source_model.set_filter(column, filter_text)
+            self.table_view.model().invalidateFilter()
+
+        logging.info(f"Filtering column {column} with text: {filter_text}")
+
     def show_about(self):
         QMessageBox.about(self, "About", "Company Management System\nVersion 1.0\n\nDeveloped by Your Name/Company")
 
     def setup_models(self):
         self.source_model = DynamicFirestoreModel()
-        self.proxy_model = DynamicFilterProxyModel()
+        self.proxy_model = DynamicFilterProxyModel(self.firestore_service)
         self.proxy_model.setSourceModel(self.source_model)
         self.toggle_view.set_model(self.proxy_model)
 
@@ -195,12 +222,6 @@ class MainWindow(QMainWindow):
             logging.error(f"Error during Company data import: {e}", exc_info=True)
             QMessageBox.critical(self, "Import Error", f"An unexpected error occurred: {str(e)}\n\nPlease check the log for details.")
 
-    def setup_models(self):
-        self.source_model = DynamicFirestoreModel()
-        self.proxy_model = DynamicFilterProxyModel()
-        self.proxy_model.setSourceModel(self.source_model)
-        self.toggle_view.set_model(self.proxy_model)
-
     def setup_menu_bar(self):
         menubar = self.menuBar()
         self.file_menu = menubar.addMenu("File")
@@ -222,7 +243,7 @@ class MainWindow(QMainWindow):
         redo_action.setShortcut(QKeySequence.StandardKey.Redo)
 
         # View menu actions
-        self.view_menu.addAction("Toggle View", self.toggle_view_action)
+        self.view_menu.addAction("Change View", self.toggle_view_action)
 
         # Help menu actions
         self.help_menu.addAction("About", self.show_about)
@@ -246,6 +267,35 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Error during search: {e}", exc_info=True)
             QMessageBox.critical(self, "Search Error", f"An error occurred during search: {str(e)}")
+
+    def load_page_data(self):
+        if not self.current_festival:
+            return
+
+        try:
+            start = self.current_page * self.page_size
+            end = start + self.page_size
+            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
+
+            if not data:
+                logging.warning(f"No data returned for page {self.current_page + 1}")
+                self.source_model.update_data([])
+                self.total_pages = 1
+                self.current_page = 0
+            else:
+                self.source_model.update_data(data)
+                total_companies = self.firestore_service.get_total_companies(self.current_festival)
+                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
+
+            self.update_pagination_controls()
+            logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")
+
+            # Reset the filter after loading new data
+            current_filter = self.search_input.text()
+            self.proxy_model.setFilterFixedString(current_filter)
+        except Exception as e:
+            logging.error(f"Error loading page data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load page data: {str(e)}")
 
     def setup_connections(self):
         self.festival_combo.currentTextChanged.connect(self.on_festival_changed)
@@ -340,31 +390,6 @@ class MainWindow(QMainWindow):
         self.festival_combo.addItems(festivals)
         if festivals:
             self.festival_combo.setCurrentIndex(0)
-
-    def load_page_data(self):
-        if not self.current_festival:
-            return
-
-        try:
-            start = self.current_page * self.page_size
-            end = start + self.page_size
-            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
-
-            if not data:
-                logging.warning(f"No data returned for page {self.current_page + 1}")
-                self.source_model.update_data([])
-                self.total_pages = 1
-                self.current_page = 0
-            else:
-                self.source_model.update_data(data)
-                total_companies = self.firestore_service.get_total_companies(self.current_festival)
-                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
-
-            self.update_pagination_controls()
-            logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")
-        except Exception as e:
-            logging.error(f"Error loading page data: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load page data: {str(e)}")
 
     def update_pagination_controls(self):
         self.page_label.setText(f"Page {self.current_page + 1} of {self.total_pages}")
