@@ -38,12 +38,12 @@ class ToggleView(QStackedWidget):
         self.addWidget(self.table_view)
 
         # Card View
-        self.card_view = QScrollArea()
+        self.card_scroll_area = QScrollArea()
         self.card_widget = QWidget()
         self.card_layout = QGridLayout(self.card_widget)
-        self.card_view.setWidget(self.card_widget)
-        self.card_view.setWidgetResizable(True)
-        self.addWidget(self.card_view)
+        self.card_scroll_area.setWidget(self.card_widget)
+        self.card_scroll_area.setWidgetResizable(True)
+        self.addWidget(self.card_scroll_area)
 
         self.current_view = 'table'
         self.filter_row = 0
@@ -84,9 +84,12 @@ class ToggleView(QStackedWidget):
         self.update_view()
 
     def update_view(self):
-        self.table_view.resizeColumnsToContents()
-        if self.model_set:
-            self.table_view.setRowHidden(self.filter_row, False)
+        if self.current_view == 'table':
+            self.table_view.resizeColumnsToContents()
+            if self.model_set:
+                self.table_view.setRowHidden(self.filter_row, False)
+        else:
+            self.update_card_view()
 
     def filter_column(self, column):
         if not self.model_set:
@@ -99,7 +102,8 @@ class ToggleView(QStackedWidget):
     def toggle_view(self):
         if self.current_view == 'table':
             self.current_view = 'card'
-            self.setCurrentWidget(self.card_view)
+            self.update_card_view()
+            self.setCurrentWidget(self.card_scroll_area)
         else:
             self.current_view = 'table'
             self.setCurrentWidget(self.table_view)
@@ -107,8 +111,10 @@ class ToggleView(QStackedWidget):
 
     def update_card_view(self):
         # Clear existing cards
-        for i in reversed(range(self.card_layout.count())):
-            self.card_layout.itemAt(i).widget().setParent(None)
+        while self.card_layout.count():
+            child = self.card_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
         # Add new cards
         model = self.table_view.model()
@@ -123,6 +129,10 @@ class ToggleView(QStackedWidget):
                 if col == 3:  # Adjust the number of columns as needed
                     col = 0
                     row += 1
+
+        # Ensure the layout updates
+        self.card_widget.setLayout(self.card_layout)
+        self.card_scroll_area.setWidget(self.card_widget)
 
     def on_row_double_clicked(self, index):
         try:
