@@ -1,3 +1,4 @@
+import bcrypt
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
@@ -10,12 +11,16 @@ class FirestoreService:
     def __init__(self, credentials_path=None):
         try:
             if credentials_path:
-                self.db = firestore.Client.from_service_account_json(credentials_path)
+                cred = credentials.Certificate(credentials_path)
+                firebase_admin.initialize_app(cred)
+                logging.info(f"Initialized Firebase app with credentials from {credentials_path}")
             else:
-                self.db = firestore.Client()
+                firebase_admin.initialize_app()
+                logging.info("Initialized Firebase app with default credentials")
+            self.db = firestore.Client()
             logging.info("Firestore client initialized successfully.")
         except Exception as e:
-            logging.error(f"Failed to initialize Firestore client: {e}")
+            logging.error(f"Failed to initialize Firestore client: {e}", exc_info=True)
             raise ValueError(f"Failed to initialize Firestore client. Error: {str(e)}")
 
     def get_all_documents(self, collection):
@@ -31,10 +36,22 @@ class FirestoreService:
             raise
 
     @retry.Retry(predicate=retry.if_exception_type(Exception))
-    def get_companies_paginated(self, festival, start, end):
+    def get_total_companies(self, festival, collection):
         try:
-            logging.info(f"Fetching companies for festival: {festival}, start: {start}, end: {end}")
-            query = self.db.collection('Company_Install').where('ProgramName', '==', festival)
+            logging.info(f"Getting total companies for festival: {festival} in collection: {collection}")
+            query = self.db.collection(collection).where('ProgramName', '==', festival)
+            total = len(query.get())
+            logging.info(f"Total companies: {total}")
+            return total
+        except Exception as e:
+            logging.error(f"Error getting total companies: {e}", exc_info=True)
+            raise
+
+    @retry.Retry(predicate=retry.if_exception_type(Exception))
+    def get_companies_paginated(self, festival, collection, start, end):
+        try:
+            logging.info(f"Fetching companies for festival: {festival}, collection: {collection}, start: {start}, end: {end}")
+            query = self.db.collection(collection).where('ProgramName', '==', festival)
             query = query.order_by('CompanyName').offset(start).limit(end - start)
             companies = query.get()
             result = [{**doc.to_dict(), 'Id': doc.id} for doc in companies]
@@ -42,18 +59,6 @@ class FirestoreService:
             return result
         except Exception as e:
             logging.error(f"Error fetching paginated companies: {e}", exc_info=True)
-            raise
-
-    @retry.Retry(predicate=retry.if_exception_type(Exception))
-    def get_total_companies(self, festival):
-        try:
-            logging.info(f"Getting total companies for festival: {festival}")
-            query = self.db.collection('Company_Install').where('ProgramName', '==', festival)
-            total = len(query.get())
-            logging.info(f"Total companies: {total}")
-            return total
-        except Exception as e:
-            logging.error(f"Error getting total companies: {e}", exc_info=True)
             raise
 
     @retry.Retry(predicate=retry.if_exception_type(Exception))
@@ -85,6 +90,87 @@ class FirestoreService:
         except Exception as e:
             logging.error(f"Error fetching company details: {e}", exc_info=True)
             raise
+
+    def get_all_users(self):
+        try:
+            users = self.db.collection('users').get()
+            return [{'username': user.get('username'), 'role': user.get('role')} for user in users]
+        except Exception as e:
+            logging.error(f"Error getting users: {e}")
+            raise
+
+    def add_user(self, username, password, role='superuser'):
+        try:
+            users_ref = self.db.collection('users')
+            logging.info(f"Checking if user {username} already exists")
+            existing_user = users_ref.where('username', '==', username).get()
+            if existing_user:
+                logging.warning(f"User already exists: {username}")
+                return False, "User already exists"
+
+            logging.info(f"Adding new user: {username}")
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            new_user = {
+                'username': username,
+                'password_hash': password_hash.decode('utf-8'),
+                'role': role
+            }
+            users_ref.add(new_user)
+            logging.info(f"User added successfully: {username}")
+            return True, "User added successfully"
+        except Exception as e:
+            logging.error(f"Error adding user {username}: {e}", exc_info=True)
+            return False, str(e)
+
+    def get_user(self, username):
+        try:
+            logging.info(f"Attempting to get user: {username}")
+            users_ref = self.db.collection('users')
+            user_docs = users_ref.where('username', '==', username).get()
+            if user_docs:
+                user_doc = user_docs[0]
+                user_data = user_doc.to_dict()
+                logging.info(f"User found: {username}")
+                return {
+                    'id': user_doc.id,
+                    'username': user_data['username'],
+                    'role': user_data.get('role', 'user')
+                }
+            logging.warning(f"User not found: {username}")
+            return None
+        except Exception as e:
+            logging.error(f"Error getting user {username}: {e}", exc_info=True)
+            return None
+
+    def authenticate_user(self, username, password):
+        # Hardcoded users
+        users = {
+            "csaba": {"password": "1234576", "role": "superuser"},
+            "hds": {"password": "1234567", "role": "superuser"}
+        }
+
+        if username in users and users[username]["password"] == password:
+            logging.info(f"User authenticated: {username}")
+            return {
+                "username": username,
+                "role": users[username]["role"]
+            }
+        else:
+            logging.warning(f"Authentication failed for user: {username}")
+            return None
+
+    def delete_user(self, username):
+        try:
+            user_query = self.db.collection('users').where('username', '==', username).limit(1).get()
+            if not user_query:
+                return False, "User not found"
+
+            user_doc = user_query[0]
+            user_doc.reference.delete()
+            return True, "User deleted successfully"
+        except Exception as e:
+            logging.error(f"Error deleting user: {e}")
+            return False, str(e)
 
     def get_sn_numbers(self, company_id):
         try:

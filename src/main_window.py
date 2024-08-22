@@ -14,6 +14,7 @@ from data_cache import DataCache
 from dynamic_firestore_model import DynamicFirestoreModel
 from festival_selection_dialog import FestivalSelectionDialog
 from firestore_service import FirestoreService
+from login_dialog import LoginDialog
 from paginated_firestore_model import PaginatedFirestoreModel
 from pythonrunnerapp.src.dynamic_filter_proxy_model import DynamicFilterProxyModel
 from pythonrunnerapp.src.firestore_listener import FirestoreListener
@@ -27,7 +28,8 @@ from telephely_importer import TelephalyImporter
 import logging
 
 from toggle_view import ToggleView
-
+from user_management_dialog import UserManagementDialog
+from startup_dialog import StartupDialog
 
 class MainWindow(QMainWindow):
     COLUMN_NAMES = {
@@ -49,15 +51,42 @@ class MainWindow(QMainWindow):
         self.firestore_service = firestore_service
         self.undo_stack = QUndoStack(self)
         self.current_festival = None
+        self.current_user = None
         self.page_size = 100
         self.current_page = 0
         self.total_pages = 0
-        self.setup_ui()
-        self.setup_models()
-        self.select_initial_festival()
+        logging.info("Starting startup process")
+        self.startup_process()
+        logging.info("Startup process completed")
+
+    def startup_process(self):
+        try:
+            logging.info("Creating StartupDialog")
+            startup_dialog = StartupDialog(self.firestore_service, self)
+            startup_dialog.startup_successful.connect(self.on_startup_successful)
+            logging.info("Executing StartupDialog")
+            if startup_dialog.exec():
+                logging.info("StartupDialog accepted")
+                self.current_user = startup_dialog.get_user()
+                self.current_festival = startup_dialog.get_selected_festival()
+                logging.info(f"User: {self.current_user}, Festival: {self.current_festival}")
+                self.setup_ui()
+            else:
+                logging.warning("StartupDialog cancelled")
+                # Don't close the window here, just log a warning
+        except Exception as e:
+            logging.error(f"Error in startup process: {e}", exc_info=True)
+            QMessageBox.critical(self, "Startup Error", f"An error occurred during startup: {str(e)}")
+
+    def on_startup_successful(self, user, festival):
+        logging.info(f"Startup successful. User: {user['username']}, Festival: {festival}")
+        self.current_user = user
+        self.current_festival = festival
+        QMessageBox.information(self, "Login Successful",
+                                f"Welcome, {user['username']}!\nSelected Festival: {festival}")
 
     def setup_ui(self):
-        self.setWindowTitle("Festival Company Management")
+        self.setWindowTitle(f"Festival Company Management - {self.current_festival}")
         self.setGeometry(100, 100, 1200, 800)
 
         central_widget = QWidget()
@@ -67,10 +96,10 @@ class MainWindow(QMainWindow):
         # Top controls
         top_layout = QHBoxLayout()
 
-        self.festival_combo = QComboBox()
-        self.festival_combo.addItems(self.firestore_service.get_festivals())
-        self.festival_combo.currentTextChanged.connect(self.change_festival)
-        top_layout.addWidget(self.festival_combo)
+        # Festival display (not editable)
+        festival_label = QLabel(f"Current Festival: {self.current_festival}")
+        festival_label.setStyleSheet("font-weight: bold;")
+        top_layout.addWidget(festival_label)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search companies...")
@@ -113,8 +142,14 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.bulk_edit_button)
         main_layout.addLayout(button_layout)
 
-        # Menu Bar
+        # Setup menu bar
         self.setup_menu_bar()
+
+        # Setup models
+        self.setup_models()
+
+        # Load initial data
+        self.load_data()
 
         logging.info("UI setup completed")
 
@@ -124,6 +159,26 @@ class MainWindow(QMainWindow):
             self.toggle_view.toggle_view()
         else:
             logging.warning("toggle_view attribute not found")
+
+    def authenticate_user(self):
+        login_dialog = LoginDialog(self.firestore_service, self)
+        login_dialog.login_successful.connect(self.on_login_successful)
+        if login_dialog.exec():
+            self.current_user = login_dialog.get_user()
+            self.setup_ui()
+        else:
+            self.close()
+
+    def on_login_successful(self, user):
+        self.current_user = user
+        QMessageBox.information(self, "Login Successful", f"Welcome, {user['username']}!")
+
+    def show_user_management_dialog(self):
+        if self.current_user['role'] == 'superuser':
+            dialog = UserManagementDialog(self.firestore_service, self)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "Access Denied", "Only superusers can access User Management.")
 
     def on_collection_changed(self):
         if self.company_install_radio.isChecked():
@@ -158,28 +213,19 @@ class MainWindow(QMainWindow):
 
     def load_data(self):
         if not self.current_festival:
+            logging.warning("No festival selected. Cannot load data.")
             return
 
         try:
-            start = self.current_page * self.page_size
-            end = start + self.page_size
-            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
+            self.current_collection = "Company_Install" if self.company_install_radio.isChecked() else "Company_Demolition"
+            total_companies = self.firestore_service.get_total_companies(self.current_festival, self.current_collection)
+            self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
 
-            if not data:
-                logging.warning(f"No data returned for page {self.current_page + 1}")
-                self.source_model.update_data([])
-                self.total_pages = 1
-                self.current_page = 0
-            else:
-                self.source_model.update_data(data)
-                total_companies = self.firestore_service.get_total_companies(self.current_festival)
-                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
+            self.load_page_data()
 
-            self.update_pagination_controls()
-            logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")
         except Exception as e:
-            logging.error(f"Error loading page data: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load page data: {str(e)}")
+            logging.error(f"Error loading data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
 
     def setup_auto_refresh(self):
         self.refresh_timer = QTimer(self)
@@ -275,17 +321,18 @@ class MainWindow(QMainWindow):
         try:
             start = self.current_page * self.page_size
             end = start + self.page_size
-            data = self.firestore_service.get_companies_paginated(self.current_festival, start, end)
+            data = self.firestore_service.get_companies_paginated(
+                self.current_festival,
+                self.current_collection,
+                start,
+                end
+            )
 
             if not data:
                 logging.warning(f"No data returned for page {self.current_page + 1}")
                 self.source_model.update_data([])
-                self.total_pages = 1
-                self.current_page = 0
             else:
                 self.source_model.update_data(data)
-                total_companies = self.firestore_service.get_total_companies(self.current_festival)
-                self.total_pages = max(1, -(-total_companies // self.page_size))  # Ceiling division
 
             self.update_pagination_controls()
             logging.info(f"Loaded page {self.current_page + 1} of {self.total_pages}")

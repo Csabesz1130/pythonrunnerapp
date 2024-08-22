@@ -1,58 +1,137 @@
-# File: sn_statistics_dashboard.py
-
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QDateTimeAxis, QValueAxis, QPieSeries, QBarSet, \
+    QBarSeries, QBarCategoryAxis
+from PyQt6.QtGui import QPainter
+from PyQt6.QtCore import Qt
 
 class SNStatisticsDashboard(QWidget):
-    def __init__(self, firestore_service, parent=None):
-        super().__init__(parent)
+    def __init__(self, firestore_service):
+        super().__init__()
         self.firestore_service = firestore_service
-        self.total_sn_label = None
-        self.canvas = None
         self.setup_ui()
         self.load_data()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
 
-        self.total_sn_label = QLabel(self)
-        layout.addWidget(self.total_sn_label)
+        # Create tabs for different charts
+        self.create_company_distribution_tab()
+        self.create_installation_status_tab()
+        self.create_sn_statistics_tab()
+        self.create_boolean_field_analysis_tab()
 
-        self.figure = Figure(figsize=(5, 4), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+    def create_company_distribution_tab(self):
+        chart_view = QChartView()
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.tab_widget.addTab(chart_view, "Company Distribution")
+        self.company_distribution_chart = chart_view.chart()
 
-        self.setLayout(layout)
+    def create_installation_status_tab(self):
+        chart_view = QChartView()
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.tab_widget.addTab(chart_view, "Installation Status")
+        self.installation_status_chart = chart_view.chart()
+
+    def create_sn_statistics_tab(self):
+        chart_view = QChartView()
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.tab_widget.addTab(chart_view, "SN Statistics")
+        self.sn_statistics_chart = chart_view.chart()
+
+    def create_boolean_field_analysis_tab(self):
+        chart_view = QChartView()
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.tab_widget.addTab(chart_view, "Boolean Field Analysis")
+        self.boolean_field_chart = chart_view.chart()
 
     def load_data(self):
+        # Fetch data from Firestore
         companies = self.firestore_service.get_all_documents("Company_Install")
-        total_sn = 0
-        sn_distribution = {}
 
+        self.update_company_distribution_chart(companies)
+        self.update_installation_status_chart(companies)
+        self.update_sn_statistics_chart(companies)
+        self.update_boolean_field_chart(companies)
+
+    def update_company_distribution_chart(self, companies):
+        program_counts = {}
         for company in companies:
-            sn_count = len(self.firestore_service.get_sn_list(company['Id']))
-            total_sn += sn_count
-            sn_distribution[company['CompanyName']] = sn_count
+            program = company.get('ProgramName', 'Unknown')
+            program_counts[program] = program_counts.get(program, 0) + 1
 
-        self.total_sn_label.setText(f"Total SN Count: {total_sn}")
+        series = QPieSeries()
+        for program, count in program_counts.items():
+            series.append(f"{program} ({count})", count)
 
-        # Create pie chart
-        ax = self.figure.add_subplot(111)
-        wedges, texts, autotexts = ax.pie(sn_distribution.values(),
-                                          labels=sn_distribution.keys(),
-                                          autopct='%1.1f%%',
-                                          textprops=dict(color="w"))
+        self.company_distribution_chart.addSeries(series)
+        self.company_distribution_chart.setTitle("Company Distribution by Program")
 
-        ax.set_title("SN Distribution Across Companies")
+    def update_installation_status_chart(self, companies):
+        status_counts = {'TELEPÍTHETŐ': 0, 'KIRAKHATÓ': 0, 'NEM KIRAKHATÓ': 0}
+        for company in companies:
+            status = company.get('felderites', 'Unknown')
+            if status in status_counts:
+                status_counts[status] += 1
 
-        # Add legend
-        ax.legend(wedges, sn_distribution.keys(),
-                  title="Companies",
-                  loc="center left",
-                  bbox_to_anchor=(1, 0, 0.5, 1))
+        series = QBarSeries()
+        bar_set = QBarSet("Installation Status")
+        for count in status_counts.values():
+            bar_set.append(count)
+        series.append(bar_set)
 
-        plt.setp(autotexts, size=8, weight="bold")
-        self.figure.tight_layout()
-        self.canvas.draw()
+        self.installation_status_chart.addSeries(series)
+        axis_x = QBarCategoryAxis()
+        axis_x.append(list(status_counts.keys()))
+        self.installation_status_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        self.installation_status_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        self.installation_status_chart.setTitle("Installation Status Distribution")
+
+    def update_sn_statistics_chart(self, companies):
+        sn_counts = [len(self.firestore_service.get_sn_list(company['Id'])) for company in companies]
+
+        series = QBarSeries()
+        bar_set = QBarSet("SN Count")
+        for count in sn_counts:
+            bar_set.append(count)
+        series.append(bar_set)
+
+        self.sn_statistics_chart.addSeries(series)
+        axis_x = QBarCategoryAxis()
+        axis_x.append([str(i) for i in range(len(companies))])
+        self.sn_statistics_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        self.sn_statistics_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        self.sn_statistics_chart.setTitle("SN Count per Company")
+
+    def update_boolean_field_chart(self, companies):
+        boolean_fields = ["Elosztó", "Áram", "Hálózat", "PTG", "Szoftver", "Param", "Helyszín"]
+        field_counts = {field: sum(1 for company in companies if company.get(field.lower(), False)) for field in boolean_fields}
+
+        series = QBarSeries()
+        bar_set = QBarSet("True Count")
+        for count in field_counts.values():
+            bar_set.append(count)
+        series.append(bar_set)
+
+        self.boolean_field_chart.addSeries(series)
+        axis_x = QBarCategoryAxis()
+        axis_x.append(boolean_fields)
+        self.boolean_field_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        self.boolean_field_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        self.boolean_field_chart.setTitle("Boolean Field Analysis")
