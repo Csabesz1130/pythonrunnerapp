@@ -22,6 +22,7 @@ from src.table_filter import FilterableTableView
 from src.site_processor import SiteProcessor
 from src.excel_exporter import ExcelExporter  # Make sure to import this
 from src.data_fetch_thread import DataFetchThread
+from src.local_storage_manager import LocalStorageManager
 
 
 class MainWindow(QMainWindow):

@@ -180,6 +180,10 @@ class FirestoreService:
                     raise ValueError(f"No company found with ID: {company_id}")
                 doc_ref = docs[0].reference
 
+            # Handle DevLoc field
+            if "DevLoc" in data and data["DevLoc"] is None:
+                data["DevLoc"] = DELETE_FIELD
+
             data['LastModified'] = firestore.SERVER_TIMESTAMP
             doc_ref.update(data)
 

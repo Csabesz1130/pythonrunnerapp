@@ -97,6 +97,10 @@ class CompanyDetailsViewInstall(QDialog):
         self.helyszin_check = QCheckBox()
         form.addRow("Helyszín:", self.helyszin_check)
 
+        self.dev_loc_combo = QComboBox()
+        self.dev_loc_combo.addItems(["", "Base", "Site", "Car"])
+        form.addRow("Device Location:", self.dev_loc_combo)
+
         self.last_modified_label = QLineEdit()
         self.last_modified_label.setReadOnly(True)
         form.addRow("Last Modified:", self.last_modified_label)
@@ -123,79 +127,86 @@ class CompanyDetailsViewInstall(QDialog):
     def update_ui_with_data(self):
         logging.info(f"Updating UI with data for company ID: {self.company_id}")
 
+        if not isinstance(self.company_data, dict):
+            logging.error(f"Invalid company data type: {type(self.company_data)}")
+            QMessageBox.critical(self, "Error", "Invalid company data format")
+            return
+
         if not self.company_data:
             logging.warning("No company data available to update UI")
             return
 
-        # Update basic company information
-        self.id_edit.setText(str(self.company_data.get("Id", "")))
-        self.name_edit.setText(self.company_data.get("CompanyName", ""))
+        try:
+            self.id_edit.setText(str(self.company_data.get("Id", "")))
+            self.name_edit.setText(self.company_data.get("CompanyName", ""))
 
-        # Update program selection
-        program_name = self.company_data.get("ProgramName", "")
-        index = self.program_combo.findText(program_name)
-        if index >= 0:
-            self.program_combo.setCurrentIndex(index)
-        elif program_name:
-            self.program_combo.addItem(program_name)
-            self.program_combo.setCurrentText(program_name)
+            program_name = self.company_data.get("ProgramName", "")
+            index = self.program_combo.findText(program_name)
+            if index >= 0:
+                self.program_combo.setCurrentIndex(index)
+            elif program_name:
+                self.program_combo.addItem(program_name)
+                self.program_combo.setCurrentText(program_name)
 
-        last_added = self.company_data.get("LastAdded", "")
-        if last_added:
-            if isinstance(last_added, datetime):
-                last_added_str = last_added.strftime("%Y-%m-%d %H:%M:%S")
+            last_added = self.company_data.get("LastAdded", "")
+            if last_added:
+                if isinstance(last_added, datetime):
+                    last_added_str = last_added.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    last_added_str = str(last_added)
             else:
-                last_added_str = str(last_added)
-        else:
-            last_added_str = ""
-        self.last_added_label.setText(last_added_str)
+                last_added_str = ""
+            self.last_added_label.setText(last_added_str)
 
-        # Update quantity
-        quantity = self.company_data.get("quantity")
-        self.quantity_edit.setText(str(quantity) if quantity is not None else "")
+            quantity = self.company_data.get("quantity")
+            self.quantity_edit.setText(str(quantity) if quantity is not None else "")
 
-        # Handle SN list
-        sn_list = self.firestore_service.get_sn_list(self.company_data)
-        if sn_list:
-            self.sn_edit.setPlainText("\n".join(sn_list))
-            self.kiadott_label.setText(str(len(sn_list)))
-        else:
-            self.sn_edit.setPlainText("No SN entries available")
-            self.kiadott_label.setText(str(self.company_data.get("sn_count", 0)))
-
-        # Update other fields
-        self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
-        self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
-        self.eloszto_check.setChecked(self.company_data.get("3", False))
-        self.aram_check.setChecked(self.company_data.get("4", False))
-        self.halozat_check.setChecked(self.company_data.get("5", False))
-        self.ptg_check.setChecked(self.company_data.get("6", False))
-        self.szoftver_check.setChecked(self.company_data.get("7", False))
-        self.param_check.setChecked(self.company_data.get("8", False))
-        self.helyszin_check.setChecked(self.company_data.get("9", False))
-
-        # Update Last Modified field
-        last_modified = self.company_data.get("LastModified", "")
-        if last_modified:
-            if isinstance(last_modified, datetime):
-                last_modified_str = last_modified.strftime("%Y-%m-%d %H:%M:%S")
-            elif isinstance(last_modified, str):
-                try:
-                    last_modified_dt = datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
-                    last_modified_str = last_modified_dt.strftime("%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    last_modified_str = last_modified  # Keep it as is if parsing fails
-            elif last_modified == SERVER_TIMESTAMP:
-                last_modified_str = "Pending server update"
+            sn_list = self.firestore_service.get_sn_list(self.company_data.get('firestore_id'))
+            if sn_list:
+                self.sn_edit.setPlainText("\n".join(sn_list))
+                self.kiadott_label.setText(str(len(sn_list)))
             else:
-                last_modified_str = str(last_modified)
-        else:
-            last_modified_str = ""
+                self.sn_edit.setPlainText("No SN entries available")
+                self.kiadott_label.setText("0")
 
-        self.last_modified_label.setText(last_modified_str)
+            self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
+            self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
+            self.eloszto_check.setChecked(self.company_data.get("3", False))
+            self.aram_check.setChecked(self.company_data.get("4", False))
+            self.halozat_check.setChecked(self.company_data.get("5", False))
+            self.ptg_check.setChecked(self.company_data.get("6", False))
+            self.szoftver_check.setChecked(self.company_data.get("7", False))
+            self.param_check.setChecked(self.company_data.get("8", False))
+            self.helyszin_check.setChecked(self.company_data.get("9", False))
 
-        logging.debug(f"Updated UI with company data: {self.company_data}")
-        logging.info("Finished updating UI")
+            dev_loc = self.company_data.get("DevLoc", "")
+            index = self.dev_loc_combo.findText(dev_loc)
+            self.dev_loc_combo.setCurrentIndex(index if index >= 0 else 0)
+
+            last_modified = self.company_data.get("LastModified", "")
+            if last_modified:
+                if isinstance(last_modified, datetime):
+                    last_modified_str = last_modified.strftime("%Y-%m-%d %H:%M:%S")
+                elif isinstance(last_modified, str):
+                    try:
+                        last_modified_dt = datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
+                        last_modified_str = last_modified_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        last_modified_str = last_modified
+                elif last_modified == SERVER_TIMESTAMP:
+                    last_modified_str = "Pending server update"
+                else:
+                    last_modified_str = str(last_modified)
+            else:
+                last_modified_str = ""
+
+            self.last_modified_label.setText(last_modified_str)
+
+            logging.debug(f"Updated UI with company data: {self.company_data}")
+            logging.info("Finished updating UI")
+        except Exception as e:
+            logging.error(f"Error updating UI with company data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to update UI with company data: {str(e)}")
 
     def populate_festivals(self):
         try:
@@ -257,82 +268,6 @@ class CompanyDetailsViewInstall(QDialog):
         if action == fetch_sn_action:
             self.fetch_sn_list()
 
-    def update_ui_with_data(self):
-        logging.info(f"Updating UI with data for company ID: {self.company_id}")
-
-        if not isinstance(self.company_data, dict):
-            logging.error(f"Invalid company data type: {type(self.company_data)}")
-            QMessageBox.critical(self, "Error", "Invalid company data format")
-            return
-
-        if not self.company_data:
-            logging.warning("No company data available to update UI")
-            return
-
-        try:
-            # Update basic company information
-            self.id_edit.setText(str(self.company_data.get("Id", "")))
-            self.name_edit.setText(self.company_data.get("CompanyName", ""))
-
-            # Update program selection
-            program_name = self.company_data.get("ProgramName", "")
-            index = self.program_combo.findText(program_name)
-            if index >= 0:
-                self.program_combo.setCurrentIndex(index)
-            elif program_name:
-                self.program_combo.addItem(program_name)
-                self.program_combo.setCurrentText(program_name)
-
-            # Update quantity
-            quantity = self.company_data.get("quantity")
-            self.quantity_edit.setText(str(quantity) if quantity is not None else "")
-
-            # Handle SN list
-            sn_list = self.firestore_service.get_sn_list(self.company_data.get('firestore_id'))
-            if sn_list:
-                self.sn_edit.setPlainText("\n".join(sn_list))
-                self.kiadott_label.setText(str(len(sn_list)))
-            else:
-                self.sn_edit.setPlainText("No SN entries available")
-                self.kiadott_label.setText("0")
-
-            # Update other fields
-            self.felderites_combo.setCurrentText(self.company_data.get("1", "TELEPÍTHETŐ"))
-            self.telepites_combo.setCurrentText(self.company_data.get("2", "KIADVA"))
-            self.eloszto_check.setChecked(self.company_data.get("3", False))
-            self.aram_check.setChecked(self.company_data.get("4", False))
-            self.halozat_check.setChecked(self.company_data.get("5", False))
-            self.ptg_check.setChecked(self.company_data.get("6", False))
-            self.szoftver_check.setChecked(self.company_data.get("7", False))
-            self.param_check.setChecked(self.company_data.get("8", False))
-            self.helyszin_check.setChecked(self.company_data.get("9", False))
-
-            # Update Last Modified field
-            last_modified = self.company_data.get("LastModified", "")
-            if last_modified:
-                if isinstance(last_modified, datetime):
-                    last_modified_str = last_modified.strftime("%Y-%m-%d %H:%M:%S")
-                elif isinstance(last_modified, str):
-                    try:
-                        last_modified_dt = datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
-                        last_modified_str = last_modified_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        last_modified_str = last_modified  # Keep it as is if parsing fails
-                elif last_modified == SERVER_TIMESTAMP:
-                    last_modified_str = "Pending server update"
-                else:
-                    last_modified_str = str(last_modified)
-            else:
-                last_modified_str = ""
-
-            self.last_modified_label.setText(last_modified_str)
-
-            logging.debug(f"Updated UI with company data: {self.company_data}")
-            logging.info("Finished updating UI")
-        except Exception as e:
-            logging.error(f"Error updating UI with company data: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to update UI with company data: {str(e)}")
-
     def set_edit_mode(self, editable):
         self.name_edit.setEnabled(editable)
         self.program_combo.setEnabled(editable)
@@ -345,6 +280,7 @@ class CompanyDetailsViewInstall(QDialog):
         self.szoftver_check.setEnabled(editable)
         self.param_check.setEnabled(editable)
         self.helyszin_check.setEnabled(editable)
+        self.dev_loc_combo.setEnabled(editable)
         self.save_button.setEnabled(editable)
         self.cancel_button.setEnabled(editable)
         self.edit_button.setEnabled(not editable)
@@ -378,7 +314,6 @@ class CompanyDetailsViewInstall(QDialog):
 
     def save_company(self):
         try:
-            # Prepare main company data
             data = {
                 "CompanyName": self.name_edit.text(),
                 "ProgramName": self.program_combo.currentText(),
@@ -391,10 +326,10 @@ class CompanyDetailsViewInstall(QDialog):
                 "7": self.szoftver_check.isChecked(),
                 "8": self.param_check.isChecked(),
                 "9": self.helyszin_check.isChecked(),
+                "DevLoc": self.dev_loc_combo.currentText() or None,
                 "LastModified": self.firestore_service.server_timestamp()
             }
 
-            # Handle quantity field
             quantity_text = self.quantity_edit.text()
             if quantity_text:
                 try:
@@ -405,11 +340,9 @@ class CompanyDetailsViewInstall(QDialog):
             else:
                 data["quantity"] = None
 
-            # Handle SN list
             sn_text = self.sn_edit.toPlainText()
             sn_list = [sn.strip() for sn in sn_text.split('\n') if sn.strip()]
 
-            # Save or update company data
             if self.is_new_company:
                 new_id = self.firestore_service.generate_id()
                 data["Id"] = new_id
@@ -420,14 +353,11 @@ class CompanyDetailsViewInstall(QDialog):
                 data["Id"] = self.company_id
                 self.firestore_service.update_company("Company_Install", self.company_id, data)
 
-            # Update SN list
             self.firestore_service.update_sn_list(self.company_id, sn_list)
 
-            # Update local data
             self.company_data.update(data)
             self.company_data['SN'] = sn_list
 
-            # Update UI
             self.set_edit_mode(False)
             self.update_ui_with_data()
             self.companyUpdated.emit(self.company_id)
